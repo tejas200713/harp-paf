@@ -1,5 +1,52 @@
+# Python environment
+venv/
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Node dependencies and build output
 node_modules/
-dist/
-.vite/
-vite-out.log
-vite-err.log
+frontend/node_modules/
+frontend/dist/
+
+# Local generated jobs and compiled binaries
+artifacts/
+*.out
+
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Editor and system files
+.vscode/
+.idea/
+.DS_Store
+
+# Development backups
+backend/*_backup.py
+backend/*_before_*.py
+frontend/src/*_backup.jsx
+frontend/src/*_before_*.jsx
+
+# Temporary files and logs
+*.log
+*.tmp
+
+# Additional development backup files
+*.backup
+*.backup-*
+*.broken-backup
+*_backup.*
+*_before_*
+*.bak
+
+# Compiled C++ executables
+examples/task1
+examples/task2
+examples/task3
+examples/task4
+
+# Temporary extracted repositories
+temp_extract/

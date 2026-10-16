@@ -1,0 +1,23 @@
+
+/* HARP-PAF live pair-analysis heatmap */
+.heat-cell:not(.diagonal) {
+  background: #17354a !important;
+  color: #e4faff !important;
+  border: 1px solid #35536a;
+  font-weight: 600;
+}
+
+.heat-cell:not(.diagonal):hover {
+  background: #24516a !important;
+}
+
+.heat-cell.chosen {
+  background: #155e66 !important;
+  color: #ffffff !important;
+  border: 2px solid #4bd6d2 !important;
+}
+
+.heat-cell.diagonal {
+  background: #111b2b !important;
+  color: #718096 !important;
+}
