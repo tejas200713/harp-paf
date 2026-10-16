@@ -1,103 +1,107 @@
+"""Global workload-pair selection (manuscript Section 3.6.9).
 
-from itertools import combinations
-from math import isfinite
+Workloads are nodes of a complete graph with edge weights J_ij. The
+selected placement is a minimum-weight perfect matching, computed exactly
+by dynamic programming over subsets (O(2^n * n), n <= 16). It returns the
+same optimum a Blossom implementation would, and ties are broken
+deterministically by the lexicographic order of task IDs.
+
+When the number of workloads is odd an IDLE node is added; pairing a
+workload with IDLE means it runs alone on a physical core (cost 0).
+"""
+
+from functools import lru_cache
+from itertools import islice
+
+from backend import config
 
 
-TASK_IDS = ("T01", "T02", "T03", "T04")
+def with_idle(task_ids):
+    task_ids = sorted(task_ids)
+    return task_ids + [config.IDLE] if len(task_ids) % 2 else task_ids
 
 
-def find_best_matching(pair_costs):
-    """
-    Find the minimum-cost perfect matching of four tasks.
+def _key(a, b):
+    return tuple(sorted((a, b)))
 
-    pair_costs:
-        Dictionary mapping task pairs to numeric costs.
 
-    Returns:
-        All three matchings and the selected matching.
-    """
+def edge_cost(costs, a, b):
+    if config.IDLE in (a, b):
+        return 0.0
+    return costs[_key(a, b)]
 
-    required_pairs = list(combinations(TASK_IDS, 2))
 
-    if set(pair_costs.keys()) != set(required_pairs):
-        raise ValueError(
-            "Exactly six pair costs are required: "
-            "T01-T02, T01-T03, T01-T04, "
-            "T02-T03, T02-T04, T03-T04"
-        )
+def minimum_matching(task_ids, costs):
+    nodes = with_idle(task_ids)
+    n = len(nodes)
 
-    for pair, cost in pair_costs.items():
-        if isinstance(cost, bool) or not isinstance(cost, (int, float)):
-            raise ValueError(f"Invalid cost for {pair}")
+    if n > config.MAX_WORKLOADS + 1:
+        raise ValueError("Too many workloads for exact matching")
 
-        if not isfinite(cost) or cost < 0:
-            raise ValueError(f"Cost must be finite and non-negative: {pair}")
+    @lru_cache(maxsize=None)
+    def solve(mask):
+        if mask == 0:
+            return 0.0, ()
 
-    matchings = [
-        (("T01", "T02"), ("T03", "T04")),
-        (("T01", "T03"), ("T02", "T04")),
-        (("T01", "T04"), ("T02", "T03")),
+        first = (mask & -mask).bit_length() - 1
+        rest = mask & ~(1 << first)
+        best = None
+
+        for second in range(first + 1, n):
+            if not rest & (1 << second):
+                continue
+            sub_cost, sub_pairs = solve(rest & ~(1 << second))
+            cost = edge_cost(costs, nodes[first], nodes[second]) + sub_cost
+            if best is None or cost < best[0] - 1e-12:
+                best = (cost, ((nodes[first], nodes[second]),) + sub_pairs)
+
+        return best
+
+    total, pairs = solve((1 << n) - 1)
+    return [list(p) for p in pairs], total
+
+
+def all_matchings(nodes):
+    if not nodes:
+        yield []
+        return
+
+    first, rest = nodes[0], nodes[1:]
+
+    for i, partner in enumerate(rest):
+        for tail in all_matchings(rest[:i] + rest[i + 1:]):
+            yield [[first, partner]] + tail
+
+
+def matching_cost(pairs, costs):
+    return sum(edge_cost(costs, a, b) for a, b in pairs)
+
+
+def ranked_matchings(task_ids, costs, limit=10):
+    """Cheapest `limit` matchings (enumerated only for small n)."""
+
+    nodes = with_idle(task_ids)
+
+    if len(nodes) > 10:
+        return None
+
+    scored = sorted(
+        (
+            {"pairs": m, "totalCost": matching_cost(m, costs)}
+            for m in all_matchings(nodes)
+        ),
+        key=lambda item: item["totalCost"],
+    )
+    return [
+        {"matching": f"M{i}", **item}
+        for i, item in enumerate(islice(scored, limit), start=1)
     ]
 
-    results = []
 
-    for index, matching in enumerate(matchings, start=1):
-        total_cost = sum(pair_costs[pair] for pair in matching)
+def matching_count(task_count):
+    count = 1
 
-        results.append({
-            "matching": f"M{index}",
-            "pairs": matching,
-            "totalCost": total_cost,
-        })
+    for odd in range(task_count + task_count % 2 - 1, 0, -2):
+        count *= odd
 
-    best = min(results, key=lambda item: item["totalCost"])
-
-    selected_tasks = [
-        task
-        for pair in best["pairs"]
-        for task in pair
-    ]
-
-    assert len(selected_tasks) == 4
-    assert set(selected_tasks) == set(TASK_IDS)
-
-    return {
-        "allMatchings": results,
-        "selectedMatching": best,
-        "selectedPairs": best["pairs"],
-        "minimumCost": best["totalCost"],
-    }
-
-
-if __name__ == "__main__":
-    # Synthetic test costs ONLY.
-    # These are not measured performance values.
-
-    test_costs = {
-        ("T01", "T02"): 8,
-        ("T01", "T03"): 2,
-        ("T01", "T04"): 7,
-        ("T02", "T03"): 6,
-        ("T02", "T04"): 3,
-        ("T03", "T04"): 9,
-    }
-
-    result = find_best_matching(test_costs)
-
-    for item in result["allMatchings"]:
-        print(
-            item["matching"],
-            item["pairs"],
-            "Total cost:",
-            item["totalCost"]
-        )
-
-    print()
-    print("Selected:", result["selectedMatching"]["matching"])
-    print("Selected pairs:", result["selectedPairs"])
-    print("Minimum cost:", result["minimumCost"])
-
-    assert result["selectedMatching"]["matching"] == "M2"
-    assert result["minimumCost"] == 5
-
-    print("STEP 10.1 TEST PASSED")
+    return count

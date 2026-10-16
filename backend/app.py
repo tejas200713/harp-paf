@@ -1,24 +1,30 @@
-
-
-
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 import hashlib
 import json
+import platform
 import re
+import subprocess
 import uuid
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from backend.compiler import compile_program
-from backend.runner import run_program
-from backend.approved_workloads import APPROVED_WORKLOADS, get_expected_output
-from backend.features import analyze_workloads
-from backend.benchmarks import benchmark_job
+
+from backend import config, profiler, topology
+from backend.approved_workloads import (
+    approved_hashes, get_workload, list_workloads,
+)
+from backend.benchmarks import METHOD_LABELS
+from backend.model import load_model
+from backend.pipeline import process_job
+
+VERSION = "0.3.0"
+
 app = FastAPI(
     title="HARP-PAF Backend",
-    description="Hardware-Aware Resource Pairing API",
-    version="0.2.0"
+    description="Phase-Aware Adaptive Fusion for Hyper-Thread Resource Pairing",
+    version=VERSION,
 )
 
 app.add_middleware(
@@ -32,12 +38,27 @@ app.add_middleware(
     allow_headers=["Content-Type"]
 )
 
-BASE_DIR = Path(__file__).resolve().parent.parent
-ARTIFACTS_DIR = BASE_DIR / "artifacts"
+ARTIFACTS_DIR = config.ARTIFACTS_DIR
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 
 MAX_FILE_SIZE = 100 * 1024
 JOB_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
+
+# One worker: jobs are measured one at a time so they never interfere
+# with each other. The worker thread is pinned to the harness CPU.
+executor = ThreadPoolExecutor(max_workers=1, initializer=topology.pin_harness)
+
+
+def _load_job(job_id):
+    if not JOB_ID_PATTERN.fullmatch(job_id):
+        raise HTTPException(404, "Job not found")
+
+    job_file = ARTIFACTS_DIR / job_id / "job.json"
+
+    if not job_file.is_file():
+        raise HTTPException(404, "Job not found")
+
+    return json.loads(job_file.read_text(encoding="utf-8"))
 
 
 @app.get("/health")
@@ -45,7 +66,7 @@ def health():
     return {
         "status": "ok",
         "service": "HARP-PAF",
-        "version": "0.2.0",
+        "version": VERSION,
         "timestamp": datetime.now(timezone.utc).isoformat()
     }
 
@@ -59,16 +80,35 @@ def home():
     }
 
 
+@app.get("/api/workloads")
+def get_workloads():
+    return [
+        {k: w[k] for k in ("file", "kind", "description", "sha256", "language")}
+        for w in list_workloads()
+    ]
+
+
 @app.post("/api/jobs", status_code=201)
 async def create_job(
     language: str = Form(...),
-    files: list[UploadFile] = File(...)
+    files: list[UploadFile] = File(...),
+    repetitions: int = Form(config.EVAL_REPETITIONS),
 ):
     if language not in ("c", "cpp"):
         raise HTTPException(400, "Language must be c or cpp")
 
-    if len(files) != 4:
-        raise HTTPException(400, "Exactly four files are required")
+    if not config.MIN_WORKLOADS <= len(files) <= config.MAX_WORKLOADS:
+        raise HTTPException(
+            400,
+            f"Between {config.MIN_WORKLOADS} and {config.MAX_WORKLOADS} files are required"
+        )
+
+    if not config.MIN_EVAL_REPETITIONS <= repetitions <= config.MAX_EVAL_REPETITIONS:
+        raise HTTPException(
+            400,
+            f"Repetitions must be between {config.MIN_EVAL_REPETITIONS} "
+            f"and {config.MAX_EVAL_REPETITIONS}"
+        )
 
     extension = ".cpp" if language == "cpp" else ".c"
     contents = []
@@ -88,30 +128,27 @@ async def create_job(
         if not content or len(content) > MAX_FILE_SIZE:
             raise HTTPException(400, f"Invalid file size: {filename}")
 
-        saved_name = f"task{index}{extension}"
+        digest = hashlib.sha256(content).hexdigest()
         contents.append(content)
-
         saved_files.append({
             "taskId": f"T{index:02d}",
             "originalName": filename,
-            "savedName": saved_name,
+            "savedName": f"task{index}{extension}",
             "size": len(content),
-            "sha256": hashlib.sha256(content).hexdigest()
+            "sha256": digest,
+            "workloadKind": (get_workload(language, digest) or {}).get("kind"),
         })
-    # This local prototype only accepts four reviewed demo programs.
-    approved_hashes = set(APPROVED_WORKLOADS[language])
 
-    submitted_hashes = [
-        metadata["sha256"] for metadata in saved_files
-    ]
+    # Only reviewed workloads from examples/manifest.json may execute.
+    submitted = [f["sha256"] for f in saved_files]
 
-    if (
-        len(set(submitted_hashes)) != 4
-        or set(submitted_hashes) != approved_hashes
-    ):
+    if len(set(submitted)) != len(submitted):
+        raise HTTPException(400, "Each workload may be submitted only once")
+
+    if not set(submitted).issubset(approved_hashes(language)):
         raise HTTPException(
             400,
-            "Live execution is restricted to the four approved demonstration programs"
+            "Live execution is restricted to the approved workloads in examples/"
         )
 
     job_id = uuid.uuid4().hex
@@ -123,273 +160,149 @@ async def create_job(
 
     job = {
         "jobId": job_id,
-        "status": "queued",
+        # "running" so the dashboard keeps polling while the job is queued.
+        "status": "running",
         "stageIndex": 0,
-        "stage": "Files saved; compilation pending",
+        "stage": "Queued for execution",
         "language": language,
         "createdAt": datetime.now(timezone.utc).isoformat(),
         "files": saved_files,
-        "measurementMode": "local-wsl2"
+        "repetitions": repetitions,
+        "measurementMode": "local-linux",
     }
 
-    job_file = job_dir / "job.json"
-
-    def save_job():
-        job_file.write_text(
-            json.dumps(job, indent=2),
-            encoding="utf-8"
-        )
-
-    save_job()
-
-    job["status"] = "running"
-    job["stageIndex"] = 1
-    job["stage"] = "Compiling source files"
-    job["compilationResults"] = []
-    save_job()
-
-    all_success = True
-
-    for index, metadata in enumerate(saved_files, start=1):
-        source_path = job_dir / metadata["savedName"]
-        output_path = job_dir / f"task{index}"
-
-        result = compile_program(
-            source_path,
-            output_path,
-            language
-        )
-
-        job["compilationResults"].append({
-            "taskId": metadata["taskId"],
-            "filename": metadata["originalName"],
-            "success": result["success"],
-            "exitCode": result["exitCode"],
-            "stdout": result["stdout"],
-            "stderr": result["stderr"]
-        })
-
-        job["stage"] = f"Compiled {index} of 4 files"
-        save_job()
-
-        if not result["success"]:
-            all_success = False
-
-    if all_success:
-        job["status"] = "running"
-        job["stageIndex"] = 3
-        job["stage"] = "Executing and verifying programs"
-        job["executionResults"] = []
-        save_job()
-
-        all_verified = True
-
-        for index, metadata in enumerate(saved_files, start=1):
-            executable = job_dir / f"task{index}"
-
-            expected_output = get_expected_output(
-                language,
-                metadata["sha256"]
-            )
-
-            result = run_program(
-                executable,
-                expected_output,
-                timeout=5
-            )
-
-            job["executionResults"].append({
-                "taskId": metadata["taskId"],
-                "filename": metadata["originalName"],
-                "success": result.get("success", False),
-                "verified": result.get("verified", False),
-                "executionTime": result.get("executionTime"),
-                "exitCode": result.get("exitCode"),
-                "stdout": result.get("stdout"),
-                "stderr": result.get("stderr"),
-                "timedOut": result.get("timedOut", False),
-                "error": result.get("error")
-            })
-
-            job["stage"] = f"Executed {index} of 4 programs"
-            save_job()
-
-            if not result.get("verified"):
-                all_verified = False
-
-        if all_verified:
-            job["status"] = "running"
-            job["stageIndex"] = 4
-            job["stage"] = "Calculating heuristic pairing costs"
-            save_job()
-
-            try:
-                pairing_result = analyze_workloads()
-
-                job["pairingAnalysis"] = pairing_result
-
-                job["pairCosts"] = pairing_result["pairCosts"]
-                job["allMatchings"] = pairing_result["allMatchings"]
-
-                job["selectedMatching"] = pairing_result[
-                    "selectedMatching"
-                ]
-
-                job["selectedPairs"] = pairing_result[
-                    "selectedPairs"
-                ]
-
-
-                job["status"] = "paired"
-                job["stageIndex"] = 5
-                job["stage"] = "Heuristic pairing complete"
-                save_job()
-
-                # Start real repeated benchmarking.
-                job["status"] = "running"
-                job["stageIndex"] = 6
-                job["stage"] = "Running repeated benchmarks"
-                save_job()
-
-
-                benchmark_result = benchmark_job(
-                    job_id,
-                    repetitions=5
-                )
-
-                job["benchmark"] = benchmark_result
-                job["status"] = "completed"
-                job["stageIndex"] = 8
-                job["stage"] = (
-                    "Compilation, execution, pairing "
-                    "and benchmarking completed"
-                )
-
-            except Exception as exc:
-                failed_during_benchmark = job.get("stageIndex", 0) >= 6
-
-                job["status"] = "failed"
-                job["stageIndex"] = 6 if failed_during_benchmark else 5
-                job["stage"] = (
-                    "Benchmark execution failed"
-                    if failed_during_benchmark
-                    else "Heuristic pairing failed"
-                )
-                job["error"] = f"{type(exc).__name__}: {exc}"
-        else:
-            job["status"] = "failed"
-            job["stageIndex"] = 4
-            job["stage"] = "Program execution or verification failed"
-            job["error"] = "One or more programs failed verification"
-
-    else:
-        job["status"] = "failed"
-        job["stageIndex"] = 2
-        job["stage"] = "Compilation failed"
-        job["error"] = "One or more source files failed to compile"
-
-    save_job()
+    (job_dir / "job.json").write_text(json.dumps(job, indent=2), encoding="utf-8")
+    executor.submit(process_job, job_id, repetitions)
 
     return job
 
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
-    if not JOB_ID_PATTERN.fullmatch(job_id):
-        raise HTTPException(404, "Job not found")
+    return _load_job(job_id)
 
-    job_file = ARTIFACTS_DIR / job_id / "job.json"
 
-    if not job_file.is_file():
-        raise HTTPException(404, "Job not found")
+def _task_rows(job):
+    characterization = job.get("characterization", {})
+    harp = job.get("evaluation", {}).get("methods", {}).get("harp", {})
+    rows = []
 
-    return json.loads(job_file.read_text(encoding="utf-8"))
+    for result in job.get("executionResults", []):
+        task_id = result["taskId"]
+        item = characterization.get(task_id, {})
+        profile = item.get("profile", {})
+        totals = profile.get("runtime", {}).get("totals", {})
+        fused = item.get("fused", {})
+        rows.append({
+            "id": task_id,
+            "filename": result["filename"],
+            "solo": profile.get("solo", {}).get("median", result["executionTime"]),
+            "soloCv": profile.get("solo", {}).get("cv"),
+            "coRun": harp.get("taskSecondsMedian", {}).get(task_id),
+            "slowdown": harp.get("taskSlowdownMedian", {}).get(task_id),
+            "instructions": totals.get("instructions"),
+            "cycles": totals.get("cycles"),
+            "ipc": (
+                totals["instructions"] / totals["cycles"]
+                if totals.get("instructions") and totals.get("cycles") else None
+            ),
+            "cacheMisses": totals.get("cache-misses"),
+            "branchMisses": totals.get("branch-misses"),
+            "sensitivity": profile.get("runtime", {}).get("sensitivity"),
+            "staticProfile": item.get("static"),
+            "phases": fused.get("phases"),
+            "phaseSegments": fused.get("segments"),
+            "meanConfidence": fused.get("meanConfidence"),
+            "profilingSeconds": profile.get("profilingSeconds"),
+            "perfOverheadFraction": profile.get("perfOverheadFraction"),
+        })
+
+    return rows
+
 
 @app.get("/api/jobs/{job_id}/results")
 def get_job_results(job_id: str):
-    if not JOB_ID_PATTERN.fullmatch(job_id):
-        raise HTTPException(404, "Job not found")
-
-    job_dir = ARTIFACTS_DIR / job_id
-    job_file = job_dir / "job.json"
-
-    if not job_file.is_file():
-        raise HTTPException(404, "Job not found")
-
-    job = json.loads(job_file.read_text(encoding="utf-8"))
+    job = _load_job(job_id)
 
     if job.get("status") == "failed":
-        raise HTTPException(
-            409,
-            job.get("error", "Job failed")
-        )
+        raise HTTPException(409, job.get("error", "Job failed"))
 
     if job.get("status") != "completed":
-        raise HTTPException(
-            202,
-            "Results are not ready yet"
-        )
+        raise HTTPException(409, "Results are not ready yet")
 
     benchmark = job.get("benchmark")
+    evaluation = job.get("evaluation")
 
-    if not benchmark:
+    if not benchmark or not evaluation:
         raise HTTPException(
             409,
-            "Completed job has no benchmark data"
+            "This job was created by an older backend version; submit it again"
         )
+
+    methods = evaluation["methods"]
+    order = ["random", "harp", "port", "linux"]
 
     return {
         "jobId": job_id,
         "status": "completed",
         "measurementMode": job.get("measurementMode"),
+        "profilingMode": job.get("profilingMode"),
         "summary": {
+            "baselineName": "Random",
             "baselineMakespan": benchmark["baselineMedianSeconds"],
             "harpMakespan": benchmark["selectedMedianSeconds"],
             "speedup": benchmark["speedup"],
-            "runtimeReductionPercent": benchmark[
-                "runtimeReductionPercent"
-            ],
+            "runtimeReductionPercent": benchmark["runtimeReductionPercent"],
             "repetitions": benchmark["repetitions"],
-            "worstTaskSlowdown": None
+            "worstTaskSlowdown": methods["harp"]["worstTaskSlowdown"]["median"],
+            "harpThroughput": methods["harp"]["throughput"]["median"],
+            "decisionSeconds": job.get("decisionSeconds"),
         },
         "makespan": [
-            {
-                "name": "Fixed baseline",
-                "value": benchmark["baselineMedianSeconds"]
-            },
-            {
-                "name": "Heuristic pairing",
-                "value": benchmark["selectedMedianSeconds"]
-            }
+            {"name": METHOD_LABELS[m], "method": m,
+             "value": methods[m]["makespan"]["median"]}
+            for m in order if m in methods
         ],
-        "rawRuns": benchmark["rawRuns"],
+        "throughput": [
+            {"name": METHOD_LABELS[m], "method": m,
+             "value": methods[m]["throughput"]["median"]}
+            for m in order if m in methods
+        ],
+        "methods": methods,
+        "comparisons": evaluation["comparisons"],
+        "rawRuns": {
+            **benchmark["rawRuns"],
+            **{
+                m: [r["makespanSeconds"] for r in evaluation["runs"][m]]
+                for m in evaluation["runs"]
+            },
+        },
+        "runOrder": evaluation["runOrder"],
         "pairs": job.get("pairCosts", []),
         "allMatchings": job.get("allMatchings", []),
+        "matchingsEvaluated": job.get("matchingsEvaluated"),
         "selectedPairs": job.get("selectedPairs", []),
-        "tasks": [
-            {
-                "id": result["taskId"],
-                "filename": result["filename"],
-                "solo": result["executionTime"],
-                "coRun": None,
-                "slowdown": None,
-                "instructions": None,
-                "cycles": None,
-                "phases": None
-            }
-            for result in job.get("executionResults", [])
-        ],
+        "portPairs": job.get("portPairs", []),
+        "randomPairsByRun": [r["pairs"] for r in evaluation["runs"]["random"]],
+        "tasks": _task_rows(job),
         "outputByTask": job.get("executionResults", []),
+        "prediction": job.get("predictionAccuracy"),
+        "model": job.get("model"),
         "system": {
-            "verifiedSmt": False,
-            "perf": False,
-            "cpuSets": benchmark.get("cpuSets", [])
+            "verifiedSmt": job.get("topology", {}).get("smtSiblingsFromSysfs", False),
+            "virtualized": job.get("topology", {}).get("virtualized"),
+            "perf": job.get("perf", {}).get("available", False),
+            "cpuSets": benchmark.get("cpuSets", []),
+            "topology": job.get("topology"),
         },
         "provenance": {
-            "pairCostSource": "illustrative heuristic",
-            "benchmarkSource": "measured local WSL",
-            "predictionAccuracy": None
-        }
+            "pairCostSource": job.get("model", {}).get("source"),
+            "profilingMode": job.get("profilingMode"),
+            "benchmarkSource": "measured",
+            "predictionAccuracy": (job.get("predictionAccuracy") or {}).get("mae"),
+        },
     }
+
 
 @app.get("/api/jobs")
 def list_jobs():
@@ -412,6 +325,8 @@ def list_jobs():
                     f.get("originalName")
                     for f in job.get("files", [])
                 ],
+                "profilingMode": job.get("profilingMode"),
+                "baselineName": benchmark.get("baselineName", "Fixed baseline"),
                 "baselineMakespan": benchmark.get(
                     "baselineMedianSeconds"
                 ),
@@ -437,10 +352,6 @@ def list_jobs():
 
 @app.get("/api/system")
 def get_system():
-    import os
-    import platform
-    import subprocess
-
     def version(command):
         try:
             result = subprocess.run(
@@ -455,23 +366,46 @@ def get_system():
         except (OSError, subprocess.TimeoutExpired):
             return "Unavailable"
 
-    allowed_cpus = sorted(os.sched_getaffinity(0))
+    topo = topology.discover()
+    perf = profiler.perf_status()
+    mode = profiler.profiling_mode()
+    model = load_model(mode)
 
     return {
         "operatingSystem": platform.platform(),
         "pythonVersion": platform.python_version(),
         "architecture": platform.machine(),
-        "logicalCpuCount": os.cpu_count(),
-        "allowedCpuIds": allowed_cpus,
-        "availableCpuCount": len(allowed_cpus),
+        "cpuModel": topo["cpuModel"],
+        "logicalCpuCount": topo["logicalCpuCount"],
+        "allowedCpuIds": topo["allowedCpus"],
+        "availableCpuCount": len(topo["allowedCpus"]),
+        "physicalCoreCount": topo["physicalCoreCount"],
+        "threadsPerCore": topo["threadsPerCore"],
+        "smtSiblingPairs": topo["smtPairs"],
+        "taskCpuPairs": topo["taskPairs"],
+        "harnessCpu": topo["harnessCpu"],
+        "verifiedSmtSiblingMapping": topo["smtSiblingsFromSysfs"],
+        "virtualized": topo["virtualized"],
+        "cacheTopology": topo["caches"],
         "compilerGcc": version(["gcc", "--version"]),
         "compilerGpp": version(["g++", "--version"]),
         "compilerClang": version(["clang++", "--version"]),
-        "verifiedSmtSiblingMapping": False,
-        "physicalCoreCount": None,
-        "cacheTopology": None,
-        "hardwareCountersAvailable": False,
-        "executionEnvironment": "Ubuntu WSL local prototype"
+        "objdump": version(["objdump", "--version"]),
+        "hardwareCountersAvailable": perf["available"],
+        "perfSupportedEvents": perf["supportedEvents"],
+        "perfUnavailableReason": perf["reason"],
+        "profilingMode": mode,
+        "model": {
+            "source": model["source"],
+            "heldOutMae": model.get("heldOutMae"),
+            "sampleCount": model.get("sampleCount"),
+            "fittedAt": model.get("fittedAt"),
+            "note": model.get("note"),
+        },
+        "executionEnvironment": (
+            "Virtualised Linux (topology as exposed by the hypervisor)"
+            if topo["virtualized"] else "Native Linux"
+        ),
     }
 
 

@@ -1,8 +1,10 @@
 from pathlib import Path
 import subprocess
 
+from backend import config
 
-def compile_program(source_path, output_path, language="cpp"):
+
+def compile_program(source_path, output_path, language="cpp", extra_flags=()):
     source_path = Path(source_path)
     output_path = Path(output_path)
 
@@ -10,17 +12,14 @@ def compile_program(source_path, output_path, language="cpp"):
         raise ValueError("Unsupported language")
 
     compiler = "g++" if language == "cpp" else "gcc"
-
-    flags = [
-        "-O2",
-        "-std=c++17" if language == "cpp" else "-std=c11",
-    ]
+    flags = config.CPP_FLAGS if language == "cpp" else config.C_FLAGS
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     command = [
         compiler,
         *flags,
+        *extra_flags,
         str(source_path),
         "-o",
         str(output_path),
@@ -31,7 +30,7 @@ def compile_program(source_path, output_path, language="cpp"):
             command,
             capture_output=True,
             text=True,
-            timeout=30,
+            timeout=60,
             check=False,
         )
 
@@ -48,6 +47,6 @@ def compile_program(source_path, output_path, language="cpp"):
             "success": False,
             "exitCode": None,
             "stdout": "",
-            "stderr": "Compilation timed out after 30 seconds",
+            "stderr": "Compilation timed out after 60 seconds",
             "command": command,
         }

@@ -6,14 +6,19 @@ import signal
 import subprocess
 import time
 
+from backend import config
+
 
 MAX_OUTPUT = 10000
-MAX_MEMORY = 256 * 1024 * 1024
+MAX_MEMORY = config.MAX_MEMORY_BYTES
 
 
 def _set_limits():
     resource.setrlimit(resource.RLIMIT_AS, (MAX_MEMORY, MAX_MEMORY))
-    resource.setrlimit(resource.RLIMIT_CPU, (5, 6))
+    resource.setrlimit(
+        resource.RLIMIT_CPU,
+        (config.CPU_LIMIT_SECONDS, config.CPU_LIMIT_SECONDS + 1),
+    )
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
 
 

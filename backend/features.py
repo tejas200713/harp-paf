@@ -1,168 +1,88 @@
+"""Pair-level interference features (manuscript Equations 1-8).
 
-"""Transparent, illustrative workload heuristic for HARP-PAF.
+Two workloads are aligned on relative instruction progress: [0, 1] is cut
+at the union of both workloads' phase boundaries, and each resulting
+interval t has weight pi[t] equal to its length. Within an interval each
+workload is in exactly one phase, whose fused features are used. This
+assumes both workloads start together and progress proportionally.
 
-All profile values are manually assigned estimates based on
-the four reviewed C++ demonstration programs.
+    R = sum_t pi[t] * sum_c omega[c] * u[i,c,t] * u[j,c,t]          (1)
+    F_pair[t] = F_i[t] + F_j[t]   (no verified shared reuse)        (2)
+    K = sum_t pi[t] * clip((F_pair[t] - C_eff) / C_eff, 0, 1)       (3)
+    B = sum_t pi[t] * b_i[t] * b_j[t]                               (4)
+    O = sum_t pi[t] * cosine(stall_i[t], stall_j[t])                (5)
+    X = sum_t pi[t] * m_i[t] * m_j[t]                               (6)
+    S = sum_t pi[t] * 0.5 * (FE_i[t]*BE_j[t] + BE_i[t]*FE_j[t])     (7)
+    z = [R, K, B, O, X, S]                                          (8)
 
-These are NOT measured hardware resource demands.
+Footprints and bandwidths are already normalised by the effective shared
+cache (C_eff = 1) and B_socket respectively.
 """
 
-from itertools import combinations
+import math
 
-from backend.pairing import TASK_IDS, find_best_matching
-
-
-# Resource scores: 0 = low/absent, 3 = high.
-#
-# Source observations:
-# T01: integer addition loop
-# T02: modulo-heavy integer loop with volatile accesses
-# T03: vector initialization and sequential traversal
-# T04: floating-point square root loop
-#
-# These are illustrative ordinal profiles, not calibrated
-# predictions of performance or SMT contention.
-
-WORKLOAD_PROFILES = {
-    "T01": {
-        "integer": 3,
-        "floating_point": 0,
-        "memory": 1,
-        "modulo": 0,
-    },
-    "T02": {
-        "integer": 2,
-        "floating_point": 0,
-        "memory": 2,
-        "modulo": 3,
-    },
-    "T03": {
-        "integer": 2,
-        "floating_point": 0,
-        "memory": 3,
-        "modulo": 2,
-    },
-    "T04": {
-        "integer": 0,
-        "floating_point": 3,
-        "memory": 1,
-        "modulo": 0,
-    },
-}
-
-WEIGHTS = {
-    "integer": 1.0,
-    "floating_point": 1.0,
-    "memory": 1.5,
-    "modulo": 1.0,
-}
+from backend import config
 
 
-def calculate_pair_cost(task_a, task_b):
-    """Calculate a weighted resource-overlap heuristic."""
+def _phase_at(fused, position):
+    for segment in fused["segments"]:
+        if segment["start"] <= position <= segment["end"]:
+            phase_id = segment["phase"]
+            break
+    else:
+        phase_id = fused["segments"][-1]["phase"]
 
-    profile_a = WORKLOAD_PROFILES[task_a]
-    profile_b = WORKLOAD_PROFILES[task_b]
+    return next(p["fused"] for p in fused["phases"] if p["id"] == phase_id)
 
-    components = {}
 
-    for resource, weight in WEIGHTS.items():
-        # Normalized overlap between 0 and 1.
-        overlap = (
-            profile_a[resource] * profile_b[resource]
-        ) / 9.0
+def align(fused_i, fused_j):
+    """Return [(pi_t, x_i_t, x_j_t)] over the union of phase boundaries."""
 
-        components[resource] = round(
-            overlap * weight, 6
+    cuts = {0.0, 1.0}
+
+    for fused in (fused_i, fused_j):
+        for segment in fused["segments"]:
+            cuts.update((segment["start"], segment["end"]))
+
+    cuts = sorted(c for c in cuts if 0.0 <= c <= 1.0)
+    intervals = []
+
+    for start, end in zip(cuts, cuts[1:]):
+        if end - start <= 1e-9:
+            continue
+        middle = (start + end) / 2
+        intervals.append(
+            (end - start, _phase_at(fused_i, middle), _phase_at(fused_j, middle))
         )
 
-    total = round(sum(components.values()), 6)
-
-    return {
-        "taskA": task_a,
-        "taskB": task_b,
-        "finalPairCost": total,
-        "features": components,
-        "source": "heuristic",
-        "predictedSlowdown": None,
-    }
+    total = sum(pi for pi, _, _ in intervals) or 1.0
+    return [(pi / total, a, b) for pi, a, b in intervals]
 
 
-def analyze_workloads():
-    """Evaluate six pairs and all three perfect matchings."""
-
-    pair_results = []
-    pair_costs = {}
-
-    for task_a, task_b in combinations(TASK_IDS, 2):
-        result = calculate_pair_cost(task_a, task_b)
-
-        pair_results.append(result)
-        pair_costs[(task_a, task_b)] = result[
-            "finalPairCost"
-        ]
-
-    matching_result = find_best_matching(pair_costs)
-
-    return {
-        "model": "manual-resource-overlap-v1",
-        "modelType": "illustrative-heuristic",
-        "measuredPredictionAccuracy": None,
-        "pairCosts": pair_results,
-        "allMatchings": matching_result["allMatchings"],
-        "selectedMatching": matching_result[
-            "selectedMatching"
-        ],
-        "selectedPairs": matching_result["selectedPairs"],
-        "minimumCost": matching_result["minimumCost"],
-        "profiles": WORKLOAD_PROFILES,
-        "weights": WEIGHTS,
-    }
+def _cosine(a, b):
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
+    return dot / norm if norm else 0.0
 
 
-if __name__ == "__main__":
-    result = analyze_workloads()
+def pair_features(fused_i, fused_j):
+    z = dict.fromkeys(config.PAIR_FEATURES, 0.0)
 
-    print("HARP-PAF HEURISTIC ANALYSIS")
-    print("---------------------------")
-
-    for pair in result["pairCosts"]:
-        print(
-            pair["taskA"],
-            "+",
-            pair["taskB"],
-            "=",
-            f'{pair["finalPairCost"]:.6f}'
+    for pi, a, b in align(fused_i, fused_j):
+        z["R"] += pi * sum(
+            weight * a[f"u_{c}"] * b[f"u_{c}"]
+            for c, weight in config.RESOURCE_WEIGHTS.items()
         )
+        z["K"] += pi * max(0.0, min(1.0, a["footprint"] + b["footprint"] - 1.0))
+        z["B"] += pi * a["bandwidth"] * b["bandwidth"]
 
-    print("\nMATCHINGS")
+        stall_a = (a["stall_fe"], a["stall_be_mem"], a["stall_be_core"])
+        stall_b = (b["stall_fe"], b["stall_be_mem"], b["stall_be_core"])
+        z["O"] += pi * _cosine(stall_a, stall_b)
+        z["X"] += pi * a["branch_miss"] * b["branch_miss"]
 
-    for matching in result["allMatchings"]:
-        print(
-            matching["matching"],
-            "cost:",
-            f'{matching["totalCost"]:.6f}'
-        )
+        be_a = min(1.0, a["stall_be_mem"] + a["stall_be_core"])
+        be_b = min(1.0, b["stall_be_mem"] + b["stall_be_core"])
+        z["S"] += pi * 0.5 * (a["stall_fe"] * be_b + be_a * b["stall_fe"])
 
-    print("\nSELECTED PAIRS")
-
-    for task_a, task_b in result["selectedPairs"]:
-        print(task_a, "+", task_b)
-
-    print("\nMODEL:", result["model"])
-    print("DATA SOURCE: ILLUSTRATIVE HEURISTIC")
-
-    assert len(result["pairCosts"]) == 6
-    assert len(result["allMatchings"]) == 3
-    assert len(result["selectedPairs"]) == 2
-
-    used_tasks = [
-        task
-        for pair in result["selectedPairs"]
-        for task in pair
-    ]
-
-    assert len(set(used_tasks)) == 4
-    assert set(used_tasks) == set(TASK_IDS)
-
-    print("\nSTEP 10.2 TEST PASSED")
+    return z
