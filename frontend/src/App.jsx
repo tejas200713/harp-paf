@@ -30,7 +30,8 @@ import {
   X,
   AlertTriangle,
   Zap,
-  Info
+  Info,
+  Terminal
 } from 'lucide-react';
 import {
   Bar,
@@ -58,6 +59,7 @@ import {
 } from 'recharts';
 import LatestJobRedirect from './LatestJobRedirect.jsx';
 import CodeOutputViewer from './components/CodeOutputViewer.jsx';
+import AnalysisNavTabs from './components/AnalysisNavTabs.jsx';
 import {
   createJob,
   getJob as getLiveJob,
@@ -87,6 +89,7 @@ const nav = [
   { section: 'Workspace' },
   { to: '/results', label: 'Results dashboard', icon: BarChart3 },
   { to: '/schedule', label: 'Schedule view', icon: Clock3 },
+  { to: '/output', label: 'Code & Stdout', icon: Terminal },
   { to: '/pairs', label: 'Pair analysis', icon: Network },
   { to: '/tasks', label: 'Task metrics', icon: Activity },
   { to: '/predictions', label: 'Prediction analysis', icon: Gauge },
@@ -672,19 +675,19 @@ function JobProgress() {
       actions={
         <div style={{ display: 'flex', gap: 10 }}>
           <span className="job-id-chip">{id}</span>
-          {completed && (
-            <>
-              <Link className="btn btn-primary" to={`/results/${id}`}>
-                <BarChart3 size={15}/> View Results Dashboard
-              </Link>
-              <Link className="btn btn-secondary" to={`/schedule/${id}`}>
-                <Clock3 size={15}/> View Schedule
-              </Link>
-            </>
-          )}
+          <Link className="btn btn-primary" to={`/schedule/${id}`}>
+            <Clock3 size={15}/> View Schedule
+          </Link>
+          <Link className="btn btn-secondary" to={`/results/${id}`}>
+            <BarChart3 size={15}/> View Results Dashboard
+          </Link>
+          <Link className="btn btn-secondary" to={`/output/${id}`}>
+            <Terminal size={15}/> View Stdout
+          </Link>
         </div>
       }
     >
+      <AnalysisNavTabs id={id} activeTab="jobs"/>
       {loading && <Card title="Loading job"><p>Fetching backend job status...</p></Card>}
       {error && <div className="form-error"><AlertTriangle size={16}/>{error}</div>}
 
@@ -757,14 +760,13 @@ function JobProgress() {
           </Card>
 
           {/* Workload execution output and verification */}
-          {(job.executionResults || job.compilationResults) && (
-            <CodeOutputViewer
-              outputs={job.executionResults}
-              compilationResults={job.compilationResults}
-              title="Live Workload Output & Verification"
-              subtitle="Real-time execution stdout, stderr, and compilation diagnostics"
-            />
-          )}
+          <CodeOutputViewer
+            outputs={job.executionResults}
+            compilationResults={job.compilationResults}
+            tasks={job.files}
+            title="Live Workload Output & Verification"
+            subtitle="Real-time execution stdout, stderr, and compilation diagnostics"
+          />
         </>
       )}
     </Page>
@@ -861,12 +863,16 @@ function LiveResults() {
           <button className="btn btn-secondary" onClick={() => jsonDownload(`${id}-results.json`, data)}>
             <Download size={15}/> Export JSON
           </button>
-          <Link className="btn btn-primary" to={`/schedule/${id}`}>
+          <Link className="btn btn-primary" to={`/schedule/${id || '609315c9a54f4a64b733cb9ff93e5478'}`}>
             <Clock3 size={15}/> View Gantt Schedule
+          </Link>
+          <Link className="btn btn-secondary" to={`/output/${id || '609315c9a54f4a64b733cb9ff93e5478'}`}>
+            <Terminal size={15}/> View Stdout
           </Link>
         </div>
       }
     >
+      <AnalysisNavTabs id={id || '609315c9a54f4a64b733cb9ff93e5478'} activeTab="results"/>
       {/* 5 Metric Cards */}
       <div className="metric-grid">
         <MetricCard
@@ -1055,6 +1061,7 @@ function LiveResults() {
       <CodeOutputViewer
         outputs={data.outputByTask}
         compilationResults={data.compilationResults}
+        tasks={data.tasks}
         title="Program Execution & Verification Outputs"
         subtitle="Inspect stdout, verification status, and compiler diagnostics for each workload in this benchmark run"
       />
@@ -1155,9 +1162,13 @@ function LiveSchedule() {
               ))}
             </select>
           </label>
+          <Link className="btn btn-secondary" to={`/output/${id || '609315c9a54f4a64b733cb9ff93e5478'}`}>
+            <Terminal size={14}/> View Stdout
+          </Link>
         </div>
       }
     >
+      <AnalysisNavTabs id={id || '609315c9a54f4a64b733cb9ff93e5478'} activeTab="schedule"/>
       <div className="metric-grid">
         <MetricCard
           label="Scheduling mode"
@@ -1310,6 +1321,7 @@ function LiveSchedule() {
         <CodeOutputViewer
           outputs={data.outputByTask}
           compilationResults={data.compilationResults}
+          tasks={data.tasks}
           title="Scheduled Workload Output & Verification"
           subtitle="Verification logs and runtime output for all tasks in this schedule"
         />
@@ -1381,6 +1393,7 @@ function LivePairAnalysis() {
         </div>
       }
     >
+      <AnalysisNavTabs id={id || '609315c9a54f4a64b733cb9ff93e5478'} activeTab="pairs"/>
       <div className="pair-layout">
         {/* Heatmap Card */}
         <Card
@@ -1662,6 +1675,7 @@ function LiveTaskMetrics() {
         </button>
       }
     >
+      <AnalysisNavTabs id={id || '609315c9a54f4a64b733cb9ff93e5478'} activeTab="tasks"/>
       {/* Task Profile Table */}
       <Card title="Task Profile Table" subtitle="All 8 workloads measured on hardware · Click any row to inspect sensitivity & phase timeline">
         <div className="table-scroll">
@@ -1811,6 +1825,7 @@ function LiveTaskMetrics() {
         <CodeOutputViewer
           outputs={data.outputByTask}
           compilationResults={data.compilationResults}
+          tasks={data.tasks}
           title="Workload Telemetry & Execution Output"
           subtitle="Inspect program standard output, verification status, and compiler diagnostics for each task"
         />
@@ -1856,6 +1871,7 @@ function LivePredictionAnalysis() {
       subtitle="Evaluation of the calibrated bottleneck sensitivity × aggressiveness model."
       actions={<span className="job-id-chip">{id}</span>}
     >
+      <AnalysisNavTabs id={id || '609315c9a54f4a64b733cb9ff93e5478'} activeTab="predictions"/>
       {/* 5 Model Metric Cards */}
       <div className="metric-grid">
         <MetricCard
@@ -2242,6 +2258,56 @@ function NotFound() {
 }
 
 // ==========================================
+// CODE & STDOUT VIEW
+// ==========================================
+function LiveCodeOutput() {
+  const { id } = useParams();
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+    getResults(targetId)
+      .then(res => { if (active) setData(res); })
+      .catch(err => { if (active) setError(err.message); });
+    return () => { active = false; };
+  }, [id]);
+
+  const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+
+  return (
+    <Page
+      title="Code execution & standard output"
+      eyebrow="EXECUTION / WORKLOAD STDOUT"
+      subtitle="Inspect standard output (stdout), stderr, checksum verification, and compiler diagnostics."
+      actions={
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Link className="btn btn-primary" to={`/schedule/${targetId}`}>
+            <Clock3 size={15}/> View Schedule
+          </Link>
+          <Link className="btn btn-secondary" to={`/results/${targetId}`}>
+            <BarChart3 size={15}/> View Results Dashboard
+          </Link>
+        </div>
+      }
+    >
+      <AnalysisNavTabs id={targetId} activeTab="output"/>
+
+      {error && <div className="form-error"><AlertTriangle size={16}/>{error}</div>}
+
+      <CodeOutputViewer
+        outputs={data?.outputByTask}
+        compilationResults={data?.compilationResults}
+        tasks={data?.tasks}
+        title="Workload Standard Output (stdout) & Diagnostics"
+        subtitle="Full console stream, loop completion logs, and checksums for all submitted programs"
+      />
+    </Page>
+  );
+}
+
+// ==========================================
 // MAIN APP ROUTER
 // ==========================================
 export default function App() {
@@ -2255,6 +2321,8 @@ export default function App() {
         <Route path="/results/:id" element={<LiveResults/>}/>
         <Route path="/schedule" element={<LatestJobRedirect destination="schedule"/>}/>
         <Route path="/schedule/:id" element={<LiveSchedule/>}/>
+        <Route path="/output" element={<LatestJobRedirect destination="output"/>}/>
+        <Route path="/output/:id" element={<LiveCodeOutput/>}/>
         <Route path="/pairs" element={<LatestJobRedirect destination="pairs"/>}/>
         <Route path="/pairs/:id" element={<LivePairAnalysis/>}/>
         <Route path="/tasks" element={<LatestJobRedirect destination="tasks"/>}/>
@@ -2268,3 +2336,4 @@ export default function App() {
     </AppLayout>
   );
 }
+
