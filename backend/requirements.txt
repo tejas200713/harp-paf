@@ -2,3 +2,5 @@ fastapi>=0.110
 uvicorn>=0.29
 python-multipart>=0.0.9
 pytest>=8.0
+tree-sitter
+tree-sitter-cpp
