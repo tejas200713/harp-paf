@@ -2,7 +2,11 @@
 
     y_hat = max(0, b0 + bR*R + bK*K + bB*B + bO*O + bX*X - bS*S)    (9)
     y     = 0.5 * [(T_i|j / T_i_solo - 1) + (T_j|i / T_j_solo - 1)] (10)
-    J     = y_hat + mu * max(0, d_worst - tau) + nu * sigma          (11)
+    J     = D + min(T_i, T_j) * [mu * max(0, d_worst - tau) + nu * sigma]
+            with D = max(T_i, T_j) + min(T_i, T_j) * y_hat          (11)
+
+J is in seconds: under the makespan objective it is the predicted time the
+SMT core spends on the pair, plus risk and uncertainty penalties.
 
 All slope coefficients are non-negative (the synergy term enters with a
 minus sign); the intercept is unconstrained. They are fitted by
@@ -122,19 +126,26 @@ def default_model():
     }
 
 
-def load_model(mode):
-    """Calibrated model for this profiling mode, else heuristic defaults."""
+def load_model(mode, platform=None, cpu_model=None):
+    """Calibrated model for this mode and machine, else heuristic defaults."""
 
     try:
         model = json.loads(config.MODEL_FILE.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return default_model()
 
-    if model.get("profilingMode") != mode:
+    expected = {"profilingMode": mode, "platform": platform, "cpuModel": cpu_model}
+    mismatches = [
+        f"{key} {model.get(key)!r} (current {value!r})"
+        for key, value in expected.items()
+        if value is not None and model.get(key) != value
+    ]
+
+    if mismatches:
         fallback = default_model()
         fallback["note"] = (
-            f"Calibrated model was fitted in {model.get('profilingMode')} "
-            f"mode; current mode is {mode}"
+            "Calibrated model ignored: fitted with " + ", ".join(mismatches)
+            + ". Run python -m backend.calibrate on this machine."
         )
         return fallback
 
@@ -146,15 +157,35 @@ def save_model(model):
     config.MODEL_FILE.write_text(json.dumps(model, indent=2), encoding="utf-8")
 
 
-def pair_cost(z, model, confidence_i, confidence_j):
+def pair_duration(solo_i, solo_j, slowdown):
+    """Predicted time the SMT core is busy with the pair (seconds).
+
+    Both tasks start together and are slowed by `slowdown` while they
+    overlap; when the shorter one finishes, the longer one runs alone:
+    D = max(T_i, T_j) + min(T_i, T_j) * y_hat.
+    """
+
+    return max(solo_i, solo_j) + min(solo_i, solo_j) * slowdown
+
+
+def pair_cost(z, model, confidence_i, confidence_j, solo_i, solo_j):
+    """Equation 11 for the makespan objective, in seconds.
+
+    J = D + overlap * [mu * max(0, d_worst - tau) + nu * sigma],
+    where overlap = min(T_i, T_j) is the co-running time the risk terms
+    apply to. Summed over a matching on one SMT core, D is the predicted
+    makespan.
+    """
+
     raw = raw_prediction(z, model["coefficients"])
     predicted = max(0.0, raw)
     worst = max(predicted, raw_prediction(z, model["worstCoefficients"]))
     error = model.get("heldOutRmse") or config.DEFAULT_RMSE
     sigma = error * (1.5 - 0.5 * (confidence_i + confidence_j))
-    cost = (
-        predicted
-        + config.RISK_MU * max(0.0, worst - config.RISK_TAU)
+    overlap = min(solo_i, solo_j)
+    duration = pair_duration(solo_i, solo_j, predicted)
+    cost = duration + overlap * (
+        config.RISK_MU * max(0.0, worst - config.RISK_TAU)
         + config.RISK_NU * sigma
     )
 
@@ -163,5 +194,7 @@ def pair_cost(z, model, confidence_i, confidence_j):
         "unclampedPrediction": raw,
         "predictedWorstSlowdown": worst,
         "uncertainty": sigma,
+        "predictedPairSeconds": duration,
+        "soloSeconds": [solo_i, solo_j],
         "finalPairCost": cost,
     }

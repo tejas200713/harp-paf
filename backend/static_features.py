@@ -1,6 +1,9 @@
 """Algorithm A: static instruction-mix analysis of compiled binaries.
 
-The compiled executable is disassembled with objdump. Each instruction is
+The compiled executable is disassembled with objdump. Only user code is
+analysed: the functions reachable from `main` through direct calls,
+excluding compiler-runtime and standard-library functions (this matters on
+Windows, where binaries are statically linked). Each instruction is
 assigned to one execution-resource class, and instructions inside loops are
 weighted by LOOP_WEIGHT per nesting level (loops are found as backward
 branches inside a function). The result is a static estimate of how the
@@ -66,9 +69,22 @@ def classify(mnemonic, operands):
     return "int_alu", has_memory
 
 
+LIBRARY_PREFIXES = ("std::", "_", "operator", "__gnu", "decltype")
+# C library functions that static linking (Windows) pulls into .text.
+C_LIBRARY = {
+    "memset", "memcpy", "memmove", "memcmp", "strlen", "strcmp", "strcpy",
+    "malloc", "calloc", "realloc", "free", "abort", "exit", "atexit",
+    "printf", "fprintf", "sprintf", "snprintf", "puts", "putchar", "fwrite",
+    "strtol", "strtoul", "strtoll", "strtoull", "atoi", "rand", "srand",
+    "sqrt", "sqrtf", "sin", "cos", "tan", "exp", "log", "pow", "fabs",
+    "floor", "ceil", "fmod", "atan2",
+}
+OFFSET_RE = re.compile(r"\+0x[0-9a-f]+$")
+
+
 def _disassemble(binary):
     result = subprocess.run(
-        ["objdump", "-d", "--no-show-raw-insn", "-j", ".text", str(binary)],
+        ["objdump", "-d", "-C", "--no-show-raw-insn", "-j", ".text", str(binary)],
         capture_output=True, text=True, timeout=30, check=False,
     )
 
@@ -131,6 +147,45 @@ def _loop_depths(instructions):
     ]
 
 
+def _call_target(operands):
+    if "<" not in operands or ">" not in operands:
+        return None
+    name = operands[operands.index("<") + 1:operands.rindex(">")]
+    return OFFSET_RE.sub("", name)
+
+
+def _is_user_function(name):
+    return (
+        name == "main"
+        or not name.startswith(LIBRARY_PREFIXES)
+        and name not in SKIPPED_FUNCTIONS
+        and name not in C_LIBRARY
+        and "@" not in name
+    )
+
+
+def user_functions(functions):
+    """Functions reachable from main via direct calls, user code only."""
+
+    if "main" not in functions:
+        return [n for n in functions
+                if n not in SKIPPED_FUNCTIONS and not n.startswith("_GLOBAL__sub_I")]
+
+    seen = {"main"}
+    queue = ["main"]
+
+    while queue:
+        for _, mnemonic, operands in functions[queue.pop()]:
+            if not mnemonic.startswith(("call", "jmp")):
+                continue
+            target = _call_target(operands)
+            if target in functions and target not in seen and _is_user_function(target):
+                seen.add(target)
+                queue.append(target)
+
+    return sorted(seen)
+
+
 def analyze_binary(binary):
     functions = _parse_functions(_disassemble(binary))
     weights = {resource: 0.0 for resource in config.RESOURCES}
@@ -140,10 +195,8 @@ def analyze_binary(binary):
     max_depth = 0
     analysed = []
 
-    for name, instructions in functions.items():
-        if name in SKIPPED_FUNCTIONS or name.startswith("_GLOBAL__sub_I"):
-            continue
-
+    for name in user_functions(functions):
+        instructions = functions[name]
         analysed.append(name)
         depths = _loop_depths(instructions)
 

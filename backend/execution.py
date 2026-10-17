@@ -1,21 +1,32 @@
 """Pinned process groups with per-process timing.
 
-Each child is pinned with sched_setaffinity before exec (no taskset launch
-overhead) and reaped individually with wait4, so every task gets its own
-wall time and rusage even when several run together. Background processes
-(stressor kernels) are killed as soon as all foreground processes finish.
+Linux: each child is pinned with sched_setaffinity before exec (no taskset
+launch overhead) and reaped individually with wait4.
+Windows: each child is created suspended, pinned, placed in a limiting
+Job Object and resumed (backend.platform_win); WaitForMultipleObjects
+reports each exit.
+
+Either way every task gets its own wall time and CPU time even when
+several run together. Background processes (stressor kernels) are killed
+as soon as all foreground processes finish.
 """
 
 from dataclasses import dataclass
 import os
-import resource
-import select
-import signal
 import subprocess
 import tempfile
 import time
 
 from backend import config
+
+WINDOWS = os.name == "nt"
+
+if WINDOWS:
+    from backend import platform_win
+else:
+    import resource
+    import select
+    import signal
 
 
 @dataclass
@@ -120,6 +131,59 @@ def _kill(process):
     process.returncode = -signal.SIGKILL
 
 
+def _wait_foreground_windows(processes, pending, launched, results, deadline):
+    """Windows equivalent of _wait_foreground; return True on timeout."""
+
+    while pending:
+        remaining = deadline - time.perf_counter()
+
+        if remaining <= 0:
+            return True
+
+        keys = sorted(pending)
+        index = platform_win.wait_any([processes[k] for k in keys], remaining)
+
+        if index is None:
+            return True
+
+        ended = time.perf_counter()
+        key = keys[index]
+        process = processes[key]
+        process.wait()
+        user, system = platform_win.process_times(process)
+        results[key] = {
+            "wallSeconds": ended - launched[key],
+            "endTime": ended,
+            "userSeconds": user,
+            "systemSeconds": system,
+            "exitCode": process.returncode,
+        }
+        pending.discard(key)
+
+    return False
+
+
+def _start(spec, stdout_file, stderr_file, cwd):
+    argv = [str(arg) for arg in spec.argv]
+
+    if WINDOWS:
+        return platform_win.start_pinned(
+            argv, spec.cpus, config.MAX_MEMORY_BYTES, config.CPU_LIMIT_SECONDS,
+            stdin=subprocess.DEVNULL, stdout=stdout_file, stderr=stderr_file,
+            cwd=str(cwd) if cwd else None,
+        )
+
+    return subprocess.Popen(
+        argv,
+        stdin=subprocess.DEVNULL,
+        stdout=stdout_file,
+        stderr=stderr_file,
+        cwd=str(cwd) if cwd else None,
+        start_new_session=True,
+        preexec_fn=_child_setup(spec.cpus),
+    )
+
+
 def _read(stream):
     stream.seek(0)
     data = stream.read(config.MAX_OUTPUT_BYTES + 1)
@@ -143,25 +207,18 @@ def run_group(specs, timeout=None, cwd=None):
             stderr_file = tempfile.TemporaryFile()
             streams[spec.key] = (stdout_file, stderr_file)
             launched[spec.key] = time.perf_counter()
-            processes[spec.key] = subprocess.Popen(
-                [str(arg) for arg in spec.argv],
-                stdin=subprocess.DEVNULL,
-                stdout=stdout_file,
-                stderr=stderr_file,
-                cwd=str(cwd) if cwd else None,
-                start_new_session=True,
-                preexec_fn=_child_setup(spec.cpus),
-            )
+            processes[spec.key] = _start(spec, stdout_file, stderr_file, cwd)
 
         pending = {spec.key for spec in specs if not spec.background}
-        timed_out = _wait_foreground(
-            processes, pending, launched, results,
-            started + timeout,
-        )
+        wait = _wait_foreground_windows if WINDOWS else _wait_foreground
+        timed_out = wait(processes, pending, launched, results, started + timeout)
 
     finally:
         for process in processes.values():
-            _kill(process)
+            if WINDOWS:
+                platform_win.kill(process)
+            else:
+                _kill(process)
 
     foreground = [s.key for s in specs if not s.background]
     makespan = (

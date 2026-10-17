@@ -28,7 +28,7 @@ def build(name):
     digest = hashlib.sha256(
         source + " ".join(config.CPP_FLAGS).encode()
     ).hexdigest()[:12]
-    output = config.KERNELS_BUILD_DIR / f"{name}-{digest}"
+    output = config.KERNELS_BUILD_DIR / f"{name}-{digest}{config.EXE_SUFFIX}"
 
     if output.is_file():
         return output

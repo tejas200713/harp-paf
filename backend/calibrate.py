@@ -85,6 +85,7 @@ def calibrate(names, repetitions):
     topo = topology.discover()
     model.update({
         "profilingMode": mode,
+        "platform": topo["platform"],
         "kernels": names,
         "repetitions": repetitions,
         "cpuModel": topo["cpuModel"],

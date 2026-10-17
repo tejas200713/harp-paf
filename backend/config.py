@@ -24,15 +24,30 @@ KERNELS_SOURCE = Path(__file__).resolve().parent / "kernels" / "stressors.cpp"
 KERNELS_BUILD_DIR = ARTIFACTS_DIR / "kernels"
 MODEL_FILE = ARTIFACTS_DIR / "model" / "coefficients.json"
 
-# Compilation and sandboxing.
-CPP_FLAGS = ["-O2", "-std=c++17"]
-C_FLAGS = ["-O2", "-std=c11"]
+WINDOWS = os.name == "nt"
+
+# Compilation and sandboxing. On Windows binaries are linked statically so
+# they do not depend on the MinGW runtime DLLs being on PATH.
+EXE_SUFFIX = ".exe" if WINDOWS else ""
+_LINK_FLAGS = ["-static"] if WINDOWS else []
+CPP_FLAGS = ["-O2", "-std=c++17", *_LINK_FLAGS]
+C_FLAGS = ["-O2", "-std=c11", *_LINK_FLAGS]
 MAX_MEMORY_BYTES = 768 * 1024 * 1024
 CPU_LIMIT_SECONDS = 120
 RUN_TIMEOUT_SECONDS = 60
 MAX_OUTPUT_BYTES = 65536
 MIN_WORKLOADS = 2
 MAX_WORKLOADS = 16
+
+# SMT experiment scope. HARP-PAF is about simultaneous multithreading: two
+# hardware threads sharing ONE physical core. By default every method runs
+# its pairs one after another on a single SMT core, so the measured effect is
+# co-runner choice on that core, not parallelism across cores.
+SMT_CORES = max(1, int(os.environ.get("HARP_SMT_CORES", "1")))
+
+# Objective (manuscript Section 3.1): "makespan" = total time for the
+# workload set on the SMT core(s). Pair cost J is in seconds.
+OBJECTIVE = "makespan"
 
 # Solo timing and evaluation.
 SOLO_REPETITIONS = 3
@@ -41,8 +56,9 @@ MIN_EVAL_REPETITIONS = 3
 MAX_EVAL_REPETITIONS = 15
 BOOTSTRAP_SAMPLES = 2000
 
-# Profiling mode: "auto" uses perf when hardware counters work,
-# otherwise interference probing against stressor kernels.
+# Profiling mode: "auto" uses hardware counters when they work (perf on
+# Linux, EMON on Windows), otherwise interference probing against stressor
+# kernels. Force with HARP_PROFILE_MODE=perf|emon|probe.
 PROFILE_MODE = os.environ.get("HARP_PROFILE_MODE", "auto")
 PERF_INTERVAL_MS = 100
 PERF_EVENTS = (
@@ -55,6 +71,28 @@ PERF_EVENTS = (
     "stalled-cycles-frontend",
     "stalled-cycles-backend",
 )
+
+# Intel EMON (VTune) counter collection on Windows; needs an elevated
+# process and the VTune sampling driver. Two explicit groups, each with
+# the fixed instruction/cycle counters so every group normalises itself.
+EMON_PATH = os.environ.get(
+    "HARP_EMON",
+    r"C:\Program Files (x86)\Intel\oneAPI\vtune\latest\bin64\emon.exe",
+)
+EMON_INTERVAL_SECONDS = 0.05   # per group; two groups -> 100 ms windows
+EMON_GROUPS = (
+    ("INST_RETIRED.ANY", "CPU_CLK_UNHALTED.THREAD",
+     "LONGEST_LAT_CACHE.REFERENCE", "LONGEST_LAT_CACHE.MISS",
+     "BR_INST_RETIRED.ALL_BRANCHES", "BR_MISP_RETIRED.ALL_BRANCHES",
+     "ARITH.DIV_ACTIVE", "FP_ARITH_INST_RETIRED.SCALAR"),
+    ("INST_RETIRED.ANY", "CPU_CLK_UNHALTED.THREAD",
+     "FP_ARITH_INST_RETIRED.VECTOR", "MEM_INST_RETIRED.ALL_LOADS",
+     "MEM_INST_RETIRED.ALL_STORES", "IDQ_BUBBLES.CORE",
+     "TOPDOWN.BACKEND_BOUND_SLOTS"),
+)
+PIPELINE_WIDTH = 6          # Golden Cove issue slots per cycle (top-down)
+EMON_ACTIVE_FRACTION = 0.2  # windows below this share of peak instructions
+                            # are before/after the workload and are dropped
 
 # Stressor kernels used for probing (fallback runtime profiler).
 PROBE_KERNELS = ("int", "fp", "stream", "cache", "branch")
@@ -73,7 +111,7 @@ CACHE_LINE_BYTES = 64
 
 # Phase detection.
 PHASE_THRESHOLD = 0.25
-PHASE_MIN_WINDOWS = 3
+PHASE_MIN_WINDOWS = 2       # 100 ms windows -> phases of at least 0.2 s
 
 # Adaptive fusion: x = q*d + (1-q)*s.
 Q_MAX = 0.9                 # static evidence always keeps some weight

@@ -7,7 +7,7 @@ pair_table()    Equations 1-11 for every candidate pair
 from itertools import combinations
 import time
 
-from backend import profiler
+from backend import config, profiler
 from backend.features import pair_features
 from backend.fusion import fuse
 from backend.model import pair_cost
@@ -27,15 +27,24 @@ def characterize(task_id, binary, argv, slot, mode, workdir, expected=None):
 
 
 def pair_table(task_ids, characterized, model):
+    """Pair rows plus the cost table for matching.
+
+    A task paired with IDLE runs alone on the core: its cost is its solo
+    time.
+    """
+
     started = time.perf_counter()
     rows = []
-    costs = {}
+    solo = {t: characterized[t]["profile"]["solo"]["median"] for t in task_ids}
+    costs = {tuple(sorted((t, config.IDLE))): solo[t] for t in task_ids}
 
     for a, b in combinations(sorted(task_ids), 2):
         fa = characterized[a]["fused"]
         fb = characterized[b]["fused"]
         z = pair_features(fa, fb)
-        cost = pair_cost(z, model, fa["meanConfidence"], fb["meanConfidence"])
+        cost = pair_cost(
+            z, model, fa["meanConfidence"], fb["meanConfidence"], solo[a], solo[b]
+        )
         costs[(a, b)] = cost["finalPairCost"]
         rows.append({
             "taskA": a,

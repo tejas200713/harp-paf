@@ -1,9 +1,12 @@
 """Algorithm B: runtime profiling.
 
-Two interchangeable profilers produce the same output shape:
+Three interchangeable profilers produce the same output shape:
 
-* perf mode   - `perf stat -I` samples hardware counters in fixed windows;
-                windows are segmented into phases (backend.phases).
+* perf mode   - (Linux) `perf stat -I` samples hardware counters in fixed
+                windows; windows are segmented into phases (backend.phases).
+* emon mode   - (Windows) Intel EMON samples counters per CPU while the
+                workload runs pinned; also measures the runtime instruction
+                mix (backend.emon). Requires an elevated process.
 * probe mode  - when hardware counters are unavailable (for example under
                 WSL2), each workload is co-run on an SMT sibling with
                 stressor kernels that saturate one resource each; the
@@ -15,12 +18,13 @@ the reference for slowdown (Equation 10) and profiling overhead.
 """
 
 from functools import lru_cache
+import os
 import shutil
 import statistics
 import subprocess
 import time
 
-from backend import config, kernels, phases
+from backend import config, emon, kernels, phases, topology
 from backend.execution import ProcessSpec, run_group
 from backend.stats import cv
 
@@ -69,10 +73,19 @@ def perf_status():
             "supportedEvents": sorted(supported)}
 
 
+def counter_status():
+    """Hardware-counter availability for this platform."""
+
+    if os.name == "nt":
+        return {"tool": "emon", **emon.status()}
+    return {"tool": "perf", **perf_status()}
+
+
 def profiling_mode():
-    if config.PROFILE_MODE in ("perf", "probe"):
+    if config.PROFILE_MODE in ("perf", "emon", "probe"):
         return config.PROFILE_MODE
-    return "perf" if perf_status()["available"] else "probe"
+    status = counter_status()
+    return status["tool"] if status["available"] else "probe"
 
 
 def _check(entry, expected, label):
@@ -219,6 +232,41 @@ def profile_perf(argv, slot, output_file, expected=None, label="task"):
     }
 
 
+def profile_emon(argv, slot, output_file, solo, expected=None, label="task"):
+    """Workload pinned to slot[0]; EMON samples system-wide on the harness CPU."""
+
+    harness = topology.discover()["harnessCpu"]
+    emon_cpus = (harness,) if harness is not None else tuple(
+        c for c in topology.discover()["allowedCpus"] if c not in slot
+    )
+    run = run_group([
+        ProcessSpec("emon", emon.command(output_file, solo["median"] * 1.5 + 0.5),
+                    emon_cpus),
+        ProcessSpec("task", argv, (slot[0],)),
+    ], timeout=config.RUN_TIMEOUT_SECONDS + solo["median"] * 2)
+    entry = run["processes"]["task"]
+
+    if run["timedOut"]:
+        raise RuntimeError(f"{label}: EMON run timed out")
+
+    _check(entry, expected, label)
+
+    if run["processes"]["emon"]["exitCode"] != 0:
+        raise RuntimeError(f"{label}: EMON failed: {run['processes']['emon']['stdout'][-300:]}")
+
+    samples = emon.parse(
+        output_file.read_text(encoding="utf-8", errors="replace"), slot[0]
+    )
+    windows, totals = emon.windows(samples)
+
+    return {
+        "wallSeconds": entry["wallSeconds"],
+        "phaseProfile": phases.detect(windows),
+        "totals": totals,
+        "windowCount": len(windows),
+    }
+
+
 def profile_probe(argv, slot, solo, expected=None, label="task"):
     sensitivity = {}
     times = {}
@@ -256,6 +304,9 @@ def profile_workload(argv, slot, mode, workdir, key, expected=None):
 
     if mode == "perf":
         runtime = profile_perf(argv, slot, workdir / f"{key}.perf.csv", expected, key)
+        overhead = runtime["wallSeconds"] / solo["median"] - 1
+    elif mode == "emon":
+        runtime = profile_emon(argv, slot, workdir / f"{key}.emon.txt", solo, expected, key)
         overhead = runtime["wallSeconds"] / solo["median"] - 1
     else:
         runtime = profile_probe(argv, slot, solo, expected, key)

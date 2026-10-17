@@ -60,6 +60,8 @@ def prediction_accuracy(pair_rows, observations):
                 "measured": item["measured"],
                 "predictedWorst": row["predictedWorstSlowdown"],
                 "measuredWorst": item["measuredWorst"],
+                "predictedPairSeconds": row["predictedPairSeconds"],
+                "measuredPairSeconds": item["measuredPairSeconds"],
             })
 
     if not points:
@@ -67,12 +69,19 @@ def prediction_accuracy(pair_rows, observations):
 
     predicted = [p["predicted"] for p in points]
     measured = [p["measured"] for p in points]
+    predicted_seconds = [p["predictedPairSeconds"] for p in points]
+    measured_seconds = [p["measuredPairSeconds"] for p in points]
     return {
         "points": points,
         "count": len(points),
         "mae": mae(predicted, measured),
         "rmse": rmse(predicted, measured),
         "spearman": spearman(predicted, measured),
+        "pairSecondsMae": mae(predicted_seconds, measured_seconds),
+        "pairSecondsMape": 100 * sum(
+            abs(p - m) / m for p, m in zip(predicted_seconds, measured_seconds)
+        ) / len(points),
+        "pairSecondsSpearman": spearman(predicted_seconds, measured_seconds),
     }
 
 
@@ -98,7 +107,10 @@ def _run(store, job, repetitions):
     language = job["language"]
     files = job["files"]
     task_ids = [f["taskId"] for f in files]
-    binaries = {f["taskId"]: store.dir / f"task{i}" for i, f in enumerate(files, 1)}
+    binaries = {
+        f["taskId"]: store.dir / f"task{i}{config.EXE_SUFFIX}"
+        for i, f in enumerate(files, 1)
+    }
     expected = {
         f["taskId"]: get_expected_output(language, f["sha256"]) for f in files
     }
@@ -144,7 +156,7 @@ def _run(store, job, repetitions):
     topo = topology.discover()
     slots = topology.task_slots()
     mode = profiler.profiling_mode()
-    store.save(topology=topo, profilingMode=mode, perf=profiler.perf_status())
+    store.save(topology=topo, profilingMode=mode, counters=profiler.counter_status())
 
     _stage(store, 4, f"Static analysis and runtime profiling ({mode} mode)")
     characterized = {}
@@ -162,7 +174,7 @@ def _run(store, job, repetitions):
     })
 
     _stage(store, 5, "Calculating pair costs and global matching")
-    model = load_model(mode)
+    model = load_model(mode, topo["platform"], topo["cpuModel"])
     decision_started = time.perf_counter()
     pair_rows, costs, _ = pair_table(task_ids, characterized, model)
     harp_pairs, minimum_cost = minimum_matching(task_ids, costs)
@@ -210,6 +222,9 @@ def _run(store, job, repetitions):
             "speedup": random_comparison["speedup"],
             "runtimeReductionPercent": random_comparison["runtimeReductionPercent"],
             "repetitions": repetitions,
+            "objective": config.OBJECTIVE,
+            "smtCores": len(slots),
+            "serialSoloSeconds": evaluation["serialSoloSeconds"],
             "cpuSets": slots,
             "rawRuns": {
                 "baseline": [r["makespanSeconds"] for r in evaluation["runs"]["random"]],

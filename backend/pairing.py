@@ -7,7 +7,8 @@ same optimum a Blossom implementation would, and ties are broken
 deterministically by the lexicographic order of task IDs.
 
 When the number of workloads is odd an IDLE node is added; pairing a
-workload with IDLE means it runs alone on a physical core (cost 0).
+workload with IDLE means it runs alone on a physical core, at the cost given
+for (task, IDLE) in the cost table (its solo time), or 0 if none is given.
 """
 
 from functools import lru_cache
@@ -27,7 +28,7 @@ def _key(a, b):
 
 def edge_cost(costs, a, b):
     if config.IDLE in (a, b):
-        return 0.0
+        return costs.get(_key(a, b), 0.0)
     return costs[_key(a, b)]
 
 

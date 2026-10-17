@@ -1,11 +1,14 @@
-"""Controlled comparison of HARP-PAF against Random, PORT and Linux default.
+"""Controlled comparison of HARP-PAF against Random, PORT and OS default.
 
 Protocol (identical for every method):
 
-* the same verified executables, the same set of physical cores (one SMT
-  sibling pair per task pair, from sysfs) and the same timeout;
-* if there are more pairs than free cores, pairs run in waves and the
-  makespan is the sum of wave makespans;
+* the same verified executables, the same SMT core(s) (sibling hardware
+  threads from the OS topology, config.SMT_CORES of them; one by default)
+  and the same timeout;
+* pairs run in waves of one pair per SMT core, so with one core the pairs
+  run one after another and the makespan is the sum of pair durations;
+* the OS-default method starts every workload at once on the same sibling
+  threads and lets the OS scheduler share them;
 * every repetition runs every method once, in a freshly shuffled order,
   to spread drift and thermal effects across methods;
 * Random redraws its matching each repetition (seeded, reproducible);
@@ -30,7 +33,7 @@ METHOD_LABELS = {
     "harp": "HARP-PAF",
     "port": "PORT",
     "random": "Random",
-    "linux": "Linux default",
+    "linux": "OS default",
 }
 
 
@@ -100,6 +103,7 @@ def _run_metrics(method, pairs, makespan, seconds, solo, waves):
             "pair": [a, b],
             "measured": 0.5 * (slowdown[a] + slowdown[b]),
             "measuredWorst": max(slowdown[a], slowdown[b]),
+            "measuredPairSeconds": max(seconds[a], seconds[b]),
         })
 
     return {
@@ -158,16 +162,22 @@ def evaluate(tasks, solo, plans, slots, repetitions, seed, include_linux=True):
                 "makespanSeconds": makespan,
             })
 
-    return _summarize(runs, run_log, seed, repetitions)
+    return _summarize(runs, run_log, seed, repetitions, sum(solo.values()))
 
 
-def _summarize(runs, run_log, seed, repetitions):
+def _summarize(runs, run_log, seed, repetitions, serial_seconds):
     methods = {}
 
     for method, records in runs.items():
+        makespan = summarize([r["makespanSeconds"] for r in records], seed)
         methods[method] = {
             "label": METHOD_LABELS[method],
-            "makespan": summarize([r["makespanSeconds"] for r in records], seed),
+            "makespan": makespan,
+            # Benefit of SMT co-running over running every workload alone,
+            # one after another, on the same core.
+            "smtGainVsSerialPercent": (
+                (serial_seconds - makespan["median"]) / serial_seconds * 100
+            ),
             "throughput": summarize([r["throughput"] for r in records], seed),
             "stp": summarize([r["stp"] for r in records], seed),
             "antt": summarize([r["antt"] for r in records], seed),
@@ -223,6 +233,9 @@ def _summarize(runs, run_log, seed, repetitions):
             "count": len(items),
             "measured": statistics.fmean(i["measured"] for i in items),
             "measuredWorst": statistics.fmean(i["measuredWorst"] for i in items),
+            "measuredPairSeconds": statistics.fmean(
+                i["measuredPairSeconds"] for i in items
+            ),
         }
         for key, items in sorted(observations.items())
     ]
@@ -230,6 +243,7 @@ def _summarize(runs, run_log, seed, repetitions):
     return {
         "repetitions": repetitions,
         "seed": seed,
+        "serialSoloSeconds": serial_seconds,
         "methods": methods,
         "comparisons": comparisons,
         "runs": runs,

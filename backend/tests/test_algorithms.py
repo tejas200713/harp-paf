@@ -6,16 +6,16 @@
 from itertools import combinations
 import random
 
-from backend import config
+from backend import config, emon
 from backend.baselines import port_matching, random_matching
 from backend.features import align, pair_features
 from backend.fusion import FEATURES, fuse, static_only
-from backend.model import fit, nnls, pair_cost, default_model
+from backend.model import default_model, fit, nnls, pair_cost, pair_duration
 from backend.pairing import (
     all_matchings, matching_cost, matching_count, minimum_matching,
 )
 from backend.phases import detect
-from backend.static_features import classify, static_estimates
+from backend.static_features import classify, static_estimates, user_functions
 from backend.stats import spearman, summarize
 
 
@@ -92,8 +92,26 @@ def test_fit_and_cost_are_sane():
     assert model["trainingMae"] < 0.05
     assert model["heldOutMae"] is not None
 
-    cost = pair_cost(samples[0]["z"], default_model(), 0.9, 0.9)
-    assert cost["finalPairCost"] >= cost["predictedSlowdown"] >= 0
+    cost = pair_cost(samples[0]["z"], default_model(), 0.9, 0.9, 1.0, 2.0)
+    assert cost["predictedSlowdown"] >= 0
+    assert cost["finalPairCost"] >= cost["predictedPairSeconds"] >= 2.0
+
+
+def test_pair_duration_overlap_model():
+    # Longer task 2 s, shorter 1 s, 30% slowdown while overlapping.
+    assert abs(pair_duration(1.0, 2.0, 0.3) - 2.3) < 1e-12
+    # No interference: the core is busy for the longer task only.
+    assert pair_duration(1.5, 1.0, 0.0) == 1.5
+
+
+def test_idle_costs_make_matching_isolate_the_right_task():
+    # Three tasks: pairing B with C is cheap, A alone costs its solo time.
+    costs = {("A", "B"): 5.0, ("A", "C"): 5.0, ("B", "C"): 1.2,
+             ("A", config.IDLE): 1.0, ("B", config.IDLE): 1.0,
+             ("C", config.IDLE): 1.0}
+    pairs, total = minimum_matching(["A", "B", "C"], costs)
+    assert sorted(map(sorted, pairs)) == [["A", config.IDLE], ["B", "C"]]
+    assert abs(total - 2.2) < 1e-12
 
 
 def test_phase_detection_finds_two_phases():
@@ -193,6 +211,58 @@ def test_classify_att_syntax():
     assert classify("divq", "%rcx") == ("mul_div", False)
     assert classify("jne", "1150 <main+0x20>") == ("branch", False)
     assert classify("add", "(%rax),%rbx") == ("int_alu", True)
+
+
+def test_user_functions_follow_calls_from_main_only():
+    functions = {
+        "main": [(1, "call", "10 <__main>"), (2, "call", "20 <left(int)>"),
+                 (3, "call", "30 <memset>"), (4, "call", "40 <std::ostream::put(char)>")],
+        "__main": [(10, "ret", "")],
+        "left(int)": [(20, "call", "50 <helper()+0x4>")],
+        "memset": [(30, "ret", "")],
+        "std::ostream::put(char)": [(40, "ret", "")],
+        "helper()": [(50, "ret", "")],
+        "unused()": [(60, "ret", "")],
+    }
+    assert user_functions(functions) == ["helper()", "left(int)", "main"]
+
+
+def test_emon_parse_reads_one_cpu_column_and_pairs_groups():
+    def row(event, cpu0, cpu1):
+        return f"{event}\t125,000,000\t{cpu0:,}\t{cpu1:,}\t"
+
+    block = "\n".join([
+        "Version Info: public V11.61",
+        row("INST_RETIRED.ANY", 5, 200_000_000),
+        row("CPU_CLK_UNHALTED.THREAD", 9, 100_000_000),
+        row("LONGEST_LAT_CACHE.REFERENCE", 0, 4_000_000),
+        row("LONGEST_LAT_CACHE.MISS", 0, 1_000_000),
+        row("BR_INST_RETIRED.ALL_BRANCHES", 0, 20_000_000),
+        row("BR_MISP_RETIRED.ALL_BRANCHES", 0, 400_000),
+        row("ARITH.DIV_ACTIVE", 0, 0),
+        row("FP_ARITH_INST_RETIRED.SCALAR", 0, 0),
+        "----------",
+        row("INST_RETIRED.ANY", 5, 200_000_000),
+        row("CPU_CLK_UNHALTED.THREAD", 9, 100_000_000),
+        row("FP_ARITH_INST_RETIRED.VECTOR", 0, 0),
+        "MEM_INST_RETIRED.ALL_LOADS\t125,000,000\tN/A\t40,000,000\t",
+        row("MEM_INST_RETIRED.ALL_STORES", 0, 20_000_000),
+        row("IDQ_BUBBLES.CORE", 0, 60_000_000),
+        row("TOPDOWN.BACKEND_BOUND_SLOTS", 0, 120_000_000),
+        "==========",
+    ])
+    samples = emon.parse(block, cpu=1)
+    windows, totals = emon.windows(samples)
+    m = windows[0]["measures"]
+
+    assert len(samples) == 2 and len(windows) == 1
+    assert abs(m["ipc"] - 2.0) < 1e-12
+    assert abs(m["footprint"] - 20 / 20.0) < 1e-12          # 20 refs per kilo-instr
+    assert abs(m["branch_miss"] - 2 / 10.0) < 1e-12         # 2 MPKI
+    assert abs(m["stall_fe"] - 0.1) < 1e-12                  # 60M / (6 * 100M)
+    assert abs(sum(m[f"mix_{r}"] for r in config.RESOURCES) - 1) < 1e-12
+    assert abs(m["mix_load_store"] - 0.3) < 1e-12
+    assert totals["instructions"] == 400_000_000
 
 
 def test_stats_helpers():

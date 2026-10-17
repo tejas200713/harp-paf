@@ -291,7 +291,8 @@ def get_job_results(job_id: str):
         "system": {
             "verifiedSmt": job.get("topology", {}).get("smtSiblingsFromSysfs", False),
             "virtualized": job.get("topology", {}).get("virtualized"),
-            "perf": job.get("perf", {}).get("available", False),
+            "perf": job.get("counters", job.get("perf", {})).get("available", False),
+            "counterTool": job.get("counters", {}).get("tool"),
             "cpuSets": benchmark.get("cpuSets", []),
             "topology": job.get("topology"),
         },
@@ -367,9 +368,9 @@ def get_system():
             return "Unavailable"
 
     topo = topology.discover()
-    perf = profiler.perf_status()
+    counters = profiler.counter_status()
     mode = profiler.profiling_mode()
-    model = load_model(mode)
+    model = load_model(mode, topo["platform"], topo["cpuModel"])
 
     return {
         "operatingSystem": platform.platform(),
@@ -391,10 +392,13 @@ def get_system():
         "compilerGpp": version(["g++", "--version"]),
         "compilerClang": version(["clang++", "--version"]),
         "objdump": version(["objdump", "--version"]),
-        "hardwareCountersAvailable": perf["available"],
-        "perfSupportedEvents": perf["supportedEvents"],
-        "perfUnavailableReason": perf["reason"],
+        "hardwareCountersAvailable": counters["available"],
+        "counterTool": counters["tool"],
+        "perfSupportedEvents": counters.get("supportedEvents"),
+        "counterUnavailableReason": counters["reason"],
         "profilingMode": mode,
+        "smtCoresUsed": config.SMT_CORES,
+        "objective": config.OBJECTIVE,
         "model": {
             "source": model["source"],
             "heldOutMae": model.get("heldOutMae"),
@@ -403,7 +407,8 @@ def get_system():
             "note": model.get("note"),
         },
         "executionEnvironment": (
-            "Virtualised Linux (topology as exposed by the hypervisor)"
+            "Native Windows" if topo["platform"] == "windows"
+            else "Virtualised Linux (topology as exposed by the hypervisor)"
             if topo["virtualized"] else "Native Linux"
         ),
     }

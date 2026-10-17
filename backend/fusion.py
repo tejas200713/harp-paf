@@ -35,7 +35,13 @@ def _stability(variation, reference):
 
 
 def _perf_estimates(measures, cvs, static, windows):
-    mix = static["instructionMix"]
+    # EMON measures the instruction mix at runtime; perf (generic events)
+    # does not, so the static mix is used with the measured intensity.
+    mix = (
+        {r: measures[f"mix_{r}"] for r in config.RESOURCES}
+        if all(f"mix_{r}" in measures for r in config.RESOURCES)
+        else static["instructionMix"]
+    )
     support = min(1.0, windows / config.PHASE_MIN_WINDOWS)
     d, q = {}, {}
 
@@ -97,7 +103,7 @@ def fuse(static, profile):
     fused_phases = []
 
     for phase in phase_profile["phases"]:
-        if profile["mode"] == "perf":
+        if profile["mode"] in ("perf", "emon"):
             d, q = _perf_estimates(
                 phase["measures"], phase["cv"], static, phase["windowCount"]
             )
