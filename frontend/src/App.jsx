@@ -57,6 +57,7 @@ import {
   YAxis
 } from 'recharts';
 import LatestJobRedirect from './LatestJobRedirect.jsx';
+import CodeOutputViewer from './components/CodeOutputViewer.jsx';
 import {
   createJob,
   getJob as getLiveJob,
@@ -506,7 +507,16 @@ function UploadCode() {
             <div className="file-list">
               <div className="file-list-head">
                 <span>SELECTED WORKLOADS <b>{files.length}</b> (2–16 allowed)</span>
-                <span>{(total / 1024).toFixed(1)} KB total</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                  <span>{(total / 1024).toFixed(1)} KB total</span>
+                  <button
+                    className="inline-button"
+                    style={{ color: '#f87171', fontSize: 11, cursor: 'pointer', background: 'transparent', border: 'none' }}
+                    onClick={() => setFiles([])}
+                  >
+                    Clear all
+                  </button>
+                </div>
               </div>
               {files.map((f, i) => (
                 <div className="file-row" key={f.name + i}>
@@ -745,6 +755,16 @@ function JobProgress() {
               Jobs take 10–15 minutes: profiling hardware counters, stressor probes, and measuring 6 methods over multiple repetitions.
             </div>
           </Card>
+
+          {/* Workload execution output and verification */}
+          {(job.executionResults || job.compilationResults) && (
+            <CodeOutputViewer
+              outputs={job.executionResults}
+              compilationResults={job.compilationResults}
+              title="Live Workload Output & Verification"
+              subtitle="Real-time execution stdout, stderr, and compilation diagnostics"
+            />
+          )}
         </>
       )}
     </Page>
@@ -761,7 +781,8 @@ function LiveResults() {
 
   useEffect(() => {
     let active = true;
-    getResults(id)
+    const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+    getResults(targetId)
       .then(result => { if (active) setData(result); })
       .catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
@@ -1029,6 +1050,14 @@ function LiveResults() {
           </div>
         </Card>
       </div>
+
+      {/* Code execution & verification outputs */}
+      <CodeOutputViewer
+        outputs={data.outputByTask}
+        compilationResults={data.compilationResults}
+        title="Program Execution & Verification Outputs"
+        subtitle="Inspect stdout, verification status, and compiler diagnostics for each workload in this benchmark run"
+      />
     </Page>
   );
 }
@@ -1046,7 +1075,8 @@ function LiveSchedule() {
 
   useEffect(() => {
     let active = true;
-    getResults(id)
+    const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+    getResults(targetId)
       .then(res => { if (active) setData(res); })
       .catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
@@ -1087,15 +1117,11 @@ function LiveSchedule() {
   ];
 
   // Palette for task bars
-  const taskColors = {
-    T01: '#4bd6d2',
-    T02: '#5797ff',
-    T03: '#8a7cf6',
-    T04: '#eebc65',
-    T05: '#63d4a1',
-    T06: '#ed7c86',
-    T07: '#f2a65a',
-    T08: '#2dd4bf'
+  const TASK_PALETTE = ['#4bd6d2', '#5797ff', '#8a7cf6', '#eebc65', '#63d4a1', '#ed7c86', '#f2a65a', '#2dd4bf', '#a78bfa', '#f472b6', '#38bdf8', '#fb923c', '#4ade80', '#e879f9'];
+  const getTaskBarColor = (taskId) => {
+    const num = parseInt((taskId || '').replace(/\D/g, ''), 10);
+    if (!isNaN(num) && num > 0) return TASK_PALETTE[(num - 1) % TASK_PALETTE.length];
+    return '#4bd6d2';
   };
 
   const maxTime = useMemo(() => {
@@ -1194,7 +1220,7 @@ function LiveSchedule() {
                   const leftPct = (item.start / maxTime) * 100;
                   const widthPct = ((item.end - item.start) / maxTime) * 100;
                   const taskObj = tasksMap[item.task];
-                  const color = taskColors[item.task] || '#4bd6d2';
+                  const color = getTaskBarColor(item.task);
 
                   return (
                     <div
@@ -1230,7 +1256,7 @@ function LiveSchedule() {
                   const leftPct = (item.start / maxTime) * 100;
                   const widthPct = ((item.end - item.start) / maxTime) * 100;
                   const taskObj = tasksMap[item.task];
-                  const color = taskColors[item.task] || '#8a7cf6';
+                  const color = getTaskBarColor(item.task);
 
                   return (
                     <div
@@ -1278,6 +1304,16 @@ function LiveSchedule() {
           <div>started next to {hoveredTask.startedWith || 'None'}, predicted slowdown +{(hoveredTask.predictedSlowdown * 100).toFixed(1)} %</div>
         </div>
       )}
+
+      {/* Code output viewer */}
+      {data && (
+        <CodeOutputViewer
+          outputs={data.outputByTask}
+          compilationResults={data.compilationResults}
+          title="Scheduled Workload Output & Verification"
+          subtitle="Verification logs and runtime output for all tasks in this schedule"
+        />
+      )}
     </Page>
   );
 }
@@ -1294,7 +1330,8 @@ function LivePairAnalysis() {
 
   useEffect(() => {
     let active = true;
-    getResults(id)
+    const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+    getResults(targetId)
       .then(res => {
         if (!active) return;
         setData(res);
@@ -1561,7 +1598,8 @@ function LiveTaskMetrics() {
 
   useEffect(() => {
     let active = true;
-    getResults(id)
+    const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+    getResults(targetId)
       .then(res => {
         if (!active) return;
         setData(res);
@@ -1767,6 +1805,16 @@ function LiveTaskMetrics() {
           </Card>
         </div>
       )}
+
+      {/* Task Telemetry & Execution Output */}
+      {data && (
+        <CodeOutputViewer
+          outputs={data.outputByTask}
+          compilationResults={data.compilationResults}
+          title="Workload Telemetry & Execution Output"
+          subtitle="Inspect program standard output, verification status, and compiler diagnostics for each task"
+        />
+      )}
     </Page>
   );
 }
@@ -1781,7 +1829,8 @@ function LivePredictionAnalysis() {
 
   useEffect(() => {
     let active = true;
-    getResults(id)
+    const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+    getResults(targetId)
       .then(res => { if (active) setData(res); })
       .catch(err => { if (active) setError(err.message); });
     return () => { active = false; };

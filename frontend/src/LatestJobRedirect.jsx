@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import { Navigate } from 'react-router-dom';
 import { listJobs } from './services/api.js';
 
+const BENCHMARK_JOB_ID = '609315c9a54f4a64b733cb9ff93e5478';
+
 export default function LatestJobRedirect({ destination }) {
-  const [jobId, setJobId] = useState(null);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [targetId, setTargetId] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -13,18 +13,17 @@ export default function LatestJobRedirect({ destination }) {
     listJobs()
       .then(jobs => {
         if (!active) return;
-
-        const latest = jobs.find(
-          job => job.status === 'completed'
-        );
-
-        setJobId(latest?.jobId || null);
-        setLoading(false);
+        // 1. Prefer a completed job (custom user job first, or benchmark)
+        const completed = (jobs || []).find(job => job.status === 'completed');
+        // 2. Fall back to any available job in the system
+        const anyJob = (jobs || [])[0];
+        // 3. Absolute fallback to the benchmark reference dataset
+        const chosen = completed?.jobId || anyJob?.jobId || BENCHMARK_JOB_ID;
+        setTargetId(chosen);
       })
-      .catch(err => {
+      .catch(() => {
         if (!active) return;
-        setError(err.message);
-        setLoading(false);
+        setTargetId(BENCHMARK_JOB_ID);
       });
 
     return () => {
@@ -32,24 +31,13 @@ export default function LatestJobRedirect({ destination }) {
     };
   }, []);
 
-  if (loading) {
-    return <div style={{ padding: 32 }}>
-      Loading latest completed job...
-    </div>;
+  if (!targetId) {
+    return (
+      <div style={{ padding: 32, color: '#8898ae' }}>
+        Loading {destination} view...
+      </div>
+    );
   }
 
-  if (error) {
-    return <div style={{ padding: 32 }}>
-      Backend error: {error}
-    </div>;
-  }
-
-  if (!jobId) {
-    return <div style={{ padding: 32 }}>
-      No completed jobs available.{' '}
-      <Link to="/upload">Start an analysis</Link>
-    </div>;
-  }
-
-  return <Navigate to={`/${destination}/${jobId}`} replace />;
+  return <Navigate to={`/${destination}/${targetId}`} replace />;
 }
