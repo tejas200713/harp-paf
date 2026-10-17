@@ -252,5 +252,11 @@ def static_estimates(static):
         "stall_be_mem": memory * 0.5,
         "stall_be_core": (mix["mul_div"] + mix["fp_simd"]) * 0.5,
         "branch_miss": mix["branch"] * 0.5,
+        # Aggressiveness proxies (weak; counters replace them when present).
+        "agg_int": mix["int_alu"] * config.STATIC_INTENSITY,
+        "agg_fp": (mix["fp_simd"] + mix["mul_div"]) * config.STATIC_INTENSITY,
+        "agg_stream": footprint * 0.5,
+        "agg_cache": footprint * 0.5,
+        "agg_branch": mix["branch"] * 0.5,
     })
     return estimates

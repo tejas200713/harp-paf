@@ -208,7 +208,8 @@ def _task_rows(job):
             ),
             "cacheMisses": totals.get("cache-misses"),
             "branchMisses": totals.get("branch-misses"),
-            "sensitivity": profile.get("runtime", {}).get("sensitivity"),
+            "sensitivity": profile.get("sensitivity")
+            or profile.get("runtime", {}).get("sensitivity"),
             "staticProfile": item.get("static"),
             "phases": fused.get("phases"),
             "phaseSegments": fused.get("segments"),

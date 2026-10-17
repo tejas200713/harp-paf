@@ -54,6 +54,7 @@ def single_phase(measures=None):
             "windowCount": 0,
             "measures": measures or {},
             "cv": {},
+            "std": {},
         }],
         "segments": [{"start": 0.0, "end": 1.0, "phase": 0}],
         "windowCount": 0,
@@ -116,17 +117,17 @@ def detect(windows, threshold=None, min_windows=None):
         keys = {k for w in members for k in w["measures"]}
         measures = {}
         cvs = {}
+        stds = {}
 
         for key in keys:
             values = [w["measures"][key] for w in members
                       if w["measures"].get(key) is not None]
             if values:
                 mean = statistics.fmean(values)
+                spread = statistics.stdev(values) if len(values) > 1 else 0.0
                 measures[key] = mean
-                cvs[key] = (
-                    statistics.stdev(values) / mean
-                    if len(values) > 1 and mean else 0.0
-                )
+                stds[key] = spread
+                cvs[key] = spread / mean if mean else 0.0
             else:
                 measures[key] = None
 
@@ -136,6 +137,7 @@ def detect(windows, threshold=None, min_windows=None):
             "windowCount": len(members),
             "measures": measures,
             "cv": cvs,
+            "std": stds,
         })
 
     return {

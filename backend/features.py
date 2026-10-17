@@ -1,4 +1,10 @@
-"""Pair-level interference features (manuscript Equations 1-8).
+"""Pair-level interference features.
+
+Two feature sets (config.FEATURE_SET):
+
+* "sa" (default): sensitivity x aggressiveness per shared resource, see
+  sa_features(). Validated against measured pairs; replaces Equations 1-8.
+* "eq": the manuscript's original Equations 1-8, documented below.
 
 Two workloads are aligned on relative instruction progress: [0, 1] is cut
 at the union of both workloads' phase boundaries, and each resulting
@@ -84,6 +90,73 @@ def _cosine(a, b):
     dot = sum(x * y for x, y in zip(a, b))
     norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
     return dot / norm if norm else 0.0
+
+
+def sa_breakdown(fused_i, fused_j, sensitivity_i, sensitivity_j, signatures):
+    """Per-resource contributions sens x aggr (for explanation only)."""
+
+    return _sa_terms(fused_i, fused_j, sensitivity_i, sensitivity_j, signatures)[1]
+
+
+def sa_features(fused_i, fused_j, sensitivity_i, sensitivity_j, signatures):
+    """Bottleneck sensitivity x aggressiveness:
+
+        H = sum_t pi[t] * 1/2 * ( max_k sens_i,k * aggr_j,k[t]
+                                + max_k sens_j,k * aggr_i,k[t] )
+
+    sens_i,k   measured slowdown of i next to stressor k (probing)
+    aggr_j,k   j's fused usage of resource k divided by the stressor's own
+               usage (signatures), i.e. "how much of a stressor k j is"
+
+    Each thread is slowed mainly by its most contended resource; taking the
+    maximum avoids counting the same contention several times (stressors
+    overlap). Phases enter through aggressiveness, aligned on instruction
+    progress.
+    """
+
+    return {"H": _sa_terms(fused_i, fused_j, sensitivity_i, sensitivity_j, signatures)[0]}
+
+
+def _sa_terms(fused_i, fused_j, sensitivity_i, sensitivity_j, signatures):
+    keys = tuple(signatures)
+    bottleneck = 0.0
+    breakdown = {f"H_{k}": 0.0 for k in keys}
+
+    def aggression(x, k):
+        reference = signatures[k]
+        if reference <= 0:
+            return 0.0
+        return min(config.AGGRESSIVENESS_CAP, x[f"agg_{k}"] / reference)
+
+    def sensitivity(values, k):
+        return max(0.0, min(config.SENSITIVITY_CAP, values.get(k, 0.0)))
+
+    for pi, a, b in align(fused_i, fused_j):
+        suffered_i = {k: sensitivity(sensitivity_i, k) * aggression(b, k) for k in keys}
+        suffered_j = {k: sensitivity(sensitivity_j, k) * aggression(a, k) for k in keys}
+        bottleneck += pi * 0.5 * (max(suffered_i.values()) + max(suffered_j.values()))
+        for k in keys:
+            breakdown[f"H_{k}"] += pi * 0.5 * (suffered_i[k] + suffered_j[k])
+
+    return bottleneck, breakdown
+
+
+def pair_vector(char_i, char_j, model, progress_i=0.0):
+    """Model features for workloads i and j (characterize() outputs).
+
+    progress_i > 0 restricts i to its remaining phases (dynamic scheduling).
+    """
+
+    fused_i = remaining(char_i["fused"], progress_i) if progress_i else char_i["fused"]
+
+    if model.get("featureSet") == "eq":
+        return pair_features(fused_i, char_j["fused"])
+
+    return sa_features(
+        fused_i, char_j["fused"],
+        char_i["profile"]["sensitivity"], char_j["profile"]["sensitivity"],
+        model.get("stressorSignatures") or config.DEFAULT_SIGNATURES,
+    )
 
 
 def pair_features(fused_i, fused_j):

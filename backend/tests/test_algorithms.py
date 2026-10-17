@@ -8,7 +8,7 @@ import random
 
 from backend import config, emon
 from backend.baselines import port_matching, random_matching
-from backend.features import align, pair_features, remaining
+from backend.features import align, pair_features, remaining, sa_breakdown, sa_features
 from backend.scheduler import HarpPolicy, PortPolicy
 from backend.fusion import FEATURES, fuse, static_only
 from backend.model import default_model, fit, nnls, pair_cost, pair_duration
@@ -93,7 +93,7 @@ def test_fit_and_cost_are_sane():
     assert model["trainingMae"] < 0.05
     assert model["heldOutMae"] is not None
 
-    cost = pair_cost(samples[0]["z"], default_model(), 0.9, 0.9, 1.0, 2.0)
+    cost = pair_cost(samples[0]["z"], default_model("eq"), 0.9, 0.9, 1.0, 2.0)
     assert cost["predictedSlowdown"] >= 0
     assert cost["finalPairCost"] >= cost["predictedPairSeconds"] >= 2.0
 
@@ -215,34 +215,59 @@ def test_remaining_cuts_phase_timeline_at_progress():
 
 
 def _policy_inputs():
-    compute = {k: 0.0 for k in FEATURES} | {"u_int_alu": 0.9, "stall_be_core": 0.9}
-    memory = {k: 0.0 for k in FEATURES} | {"bandwidth": 0.9, "footprint": 0.9,
-                                           "stall_be_mem": 0.9}
+    compute = {k: 0.0 for k in FEATURES} | {
+        "u_int_alu": 0.9, "stall_be_core": 0.9, "agg_int": 0.45}
+    memory = {k: 0.0 for k in FEATURES} | {
+        "bandwidth": 0.9, "footprint": 0.9, "stall_be_mem": 0.9, "agg_stream": 0.6}
+    insensitive = dict.fromkeys(config.PROBE_KERNELS, 0.0)
+    memory_sensitive = insensitive | {"stream": 0.7}
 
-    def task(features, solo, fp_share):
+    def task(features, sensitivity, solo, fp_share):
         return {
             "fused": {"phases": [{"id": 0, "fused": features}],
                       "segments": [{"start": 0.0, "end": 1.0, "phase": 0}],
                       "meanConfidence": 0.5},
-            "profile": {"solo": {"median": solo}},
+            "profile": {"solo": {"median": solo}, "sensitivity": sensitivity},
             "static": _static(fp_simd=fp_share, int_alu=1 - fp_share),
         }
 
     return {
-        "MEM1": task(memory, 1.0, 0.0),
-        "MEM2": task(memory, 1.2, 0.0),
-        "CPU1": task(compute, 0.8, 0.9),
+        "MEM1": task(memory, memory_sensitive, 1.0, 0.0),
+        "MEM2": task(memory, memory_sensitive, 1.2, 0.0),
+        "CPU1": task(compute, insensitive, 0.8, 0.9),
     }
 
 
 def test_harp_policy_avoids_memory_co_runner_for_memory_task():
     characterized = _policy_inputs()
-    policy = HarpPolicy(characterized, default_model())
 
-    assert policy.start(["MEM1", "MEM2", "CPU1"]) == "MEM2"   # longest first
-    choice, slowdown = policy.choose("MEM2", 0.0, ["MEM1", "CPU1"])
-    assert choice == "CPU1"
-    assert slowdown >= 0
+    for feature_set in ("sa", "eq"):
+        policy = HarpPolicy(characterized, default_model(feature_set))
+        assert policy.start(["MEM1", "MEM2", "CPU1"]) == "MEM2"   # longest first
+        choice, slowdown = policy.choose("MEM2", 0.0, ["MEM1", "CPU1"])
+        assert choice == "CPU1"
+        assert slowdown >= 0
+
+
+def test_sensitivity_aggressiveness_features():
+    signatures = dict(config.DEFAULT_SIGNATURES)
+    x_a = dict.fromkeys(FEATURES, 0.0) | {"agg_stream": signatures["stream"]}
+    x_b = dict.fromkeys(FEATURES, 0.0) | {"agg_int": signatures["int"] * 0.5}
+
+    def workload(x):
+        return {"phases": [{"id": 0, "fused": x}],
+                "segments": [{"start": 0.0, "end": 1.0, "phase": 0}]}
+
+    sens_a = {"int": 0.4, "branch": 0.1}   # a suffers from integer co-runners
+    sens_b = {"stream": 0.6}               # b suffers from memory streams
+    z = sa_features(workload(x_a), workload(x_b), sens_a, sens_b, signatures)
+    parts = sa_breakdown(workload(x_a), workload(x_b), sens_a, sens_b, signatures)
+
+    # a's bottleneck: int, 0.4 * 0.5 ; b's bottleneck: stream, 0.6 * 1.0
+    assert abs(z["H"] - 0.5 * (0.2 + 0.6)) < 1e-12
+    assert abs(parts["H_int"] - 0.1) < 1e-12
+    assert abs(parts["H_stream"] - 0.3) < 1e-12
+    assert parts["H_cache"] == parts["H_fp"] == parts["H_branch"] == 0.0
 
 
 def test_port_policy_pairs_intensive_with_light():
@@ -307,8 +332,8 @@ def test_emon_parse_reads_one_cpu_column_and_pairs_groups():
 
     assert len(samples) == 2 and len(windows) == 1
     assert abs(m["ipc"] - 2.0) < 1e-12
-    assert abs(m["footprint"] - 20 / 20.0) < 1e-12          # 20 refs per kilo-instr
-    assert abs(m["branch_miss"] - 2 / 10.0) < 1e-12         # 2 MPKI
+    assert abs(m["footprint"] - 20 / config.FOOTPRINT_REFERENCE_PKI) < 1e-12  # 20 refs/kilo-instr
+    assert abs(m["branch_miss"] - 2 / config.BRANCH_MPKI_REFERENCE) < 1e-12   # 2 MPKI
     assert abs(m["stall_fe"] - 0.1) < 1e-12                  # 60M / (6 * 100M)
     assert abs(sum(m[f"mix_{r}"] for r in config.RESOURCES) - 1) < 1e-12
     assert abs(m["mix_load_store"] - 0.3) < 1e-12

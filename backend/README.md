@@ -19,9 +19,9 @@ across cores. The objective is makespan (total time for the workload set).
 | Verify | `runner.py` | each program runs once; stdout must equal the manifest's expected output |
 | Topology | `topology.py`, `platform_win.py` | SMT siblings from Linux sysfs or `GetLogicalProcessorInformationEx`; pairs only on the fastest SMT cores (P-cores); harness on a single-thread E-core |
 | **Algorithm A – static** | `static_features.py` | `objdump` instruction mix (int ALU, mul/div, FP/SIMD, load/store, branch) of user functions reachable from `main`, weighted ×10 per loop-nesting level |
-| **Algorithm B – runtime** | `profiler.py`, `emon.py`, `phases.py` | hardware-counter windows (EMON on Windows, `perf` on Linux) → phase segmentation and runtime instruction mix; without counters, sensitivity probing against stressor kernels |
+| **Algorithm B – runtime** | `profiler.py`, `emon.py`, `phases.py` | sensitivity to each shared resource by probing against five stressor kernels, plus hardware-counter windows (EMON on Windows, `perf` on Linux) → phase segmentation, runtime instruction mix and resource usage |
 | **Adaptive fusion** | `fusion.py` | `x = q·d + (1−q)·s` per workload, phase and feature; `q` from measurement availability and stability |
-| Pair features | `features.py` | Equations 1–8 (R, K, B, O, X, S) on phase-aligned fused features |
+| Pair features | `features.py` | bottleneck sensitivity × aggressiveness `H` on phase-aligned fused features (default); original Equations 1–8 available as `HARP_FEATURE_SET=eq` |
 | Cost model | `model.py` | Equations 9–11: NNLS slowdown regression, worst-case model; pair cost `J` = predicted time the core is busy with the pair (seconds) plus risk/uncertainty terms |
 | Matching | `pairing.py` | exact minimum-weight perfect matching (subset DP); an unpaired task runs alone at its solo time |
 | Baselines | `baselines.py` | Random (redrawn per repetition), PORT (static port-pressure folding), OS default (all workloads time-shared on the same two threads) |
@@ -114,6 +114,33 @@ branches, and a three-phase mix). The original `task1`–`task4` remain
 approved but run for milliseconds, too short for meaningful measurement.
 To add a workload: put the source in `examples/` and add its expected
 output to `manifest.json`.
+
+## Slowdown model
+
+For each workload HARP-PAF knows
+
+* **sensitivity** `sens_i,k`: its measured slowdown next to stressor `k`
+  (integer ports, FP/divider, memory bandwidth, cache, branches), and
+* **aggressiveness** `aggr_i,k[t]`: how strongly it uses resource `k` in
+  phase `t` relative to the stressor itself (counters fused with static
+  analysis; `1.0` = as aggressive as the stressor).
+
+The predicted mean slowdown of a pair is `max(0, b0 + b·H)` with
+
+    H = Σ_t π_t · ½ (max_k sens_i,k·aggr_j,k[t] + max_k sens_j,k·aggr_i,k[t])
+
+Each thread is slowed mainly by its most contended resource; taking the
+maximum avoids counting overlapping contention several times. Validated on
+the 55 calibration pairs (leave-one-workload-out, Windows EMON mode, i5-1235U):
+
+| Model | Held-out MAE | Rank correlation |
+|---|---|---|
+| always the mean slowdown | 0.133 | – |
+| original Equations 1–8 | 0.129 | 0.33 |
+| bottleneck sensitivity × aggressiveness | 0.071 | 0.82 |
+
+Each pair row also carries the per-resource contributions (`contributions`)
+to explain which resource drives the predicted slowdown.
 
 ## Scheduling
 

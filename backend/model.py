@@ -1,20 +1,24 @@
 """Slowdown regression and adjusted pair cost (Equations 9-11).
 
-    y_hat = max(0, b0 + bR*R + bK*K + bB*B + bO*O + bX*X - bS*S)    (9)
+    y_hat = max(0, b0 + sum_f b_f * z_f)                            (9)
     y     = 0.5 * [(T_i|j / T_i_solo - 1) + (T_j|i / T_j_solo - 1)] (10)
     J     = D + min(T_i, T_j) * [mu * max(0, d_worst - tau) + nu * sigma]
             with D = max(T_i, T_j) + min(T_i, T_j) * y_hat          (11)
 
+z is the pair feature vector of the configured feature set
+(config.FEATURE_SET): the sensitivity x aggressiveness terms H_k ("sa",
+default) or the original R, K, B, O, X, S ("eq", where the synergy term S
+enters with a minus sign).
+
 J is in seconds: under the makespan objective it is the predicted time the
 SMT core spends on the pair, plus risk and uncertainty penalties.
 
-All slope coefficients are non-negative (the synergy term enters with a
-minus sign); the intercept is unconstrained. They are fitted by
-non-negative least squares on measured pairs of the training kernels
-(`python -m backend.calibrate`). d_worst comes from a second model with
-the same features fitted to the worse of the two per-task slowdowns.
-sigma is the held-out RMSE scaled by how much the pair relies on static
-evidence: sigma = rmse * (1.5 - 0.5 * (q_i + q_j)).
+All slope coefficients are non-negative; the intercept is unconstrained.
+They are fitted by non-negative least squares on measured pairs of the
+training kernels (`python -m backend.calibrate`). d_worst comes from a
+second model with the same features fitted to the worse of the two
+per-task slowdowns. sigma is the held-out RMSE scaled by how much the pair
+relies on static evidence: sigma = rmse * (1.5 - 0.5 * (q_i + q_j)).
 
 Until calibration has been run, documented heuristic defaults are used
 and every result is labelled `heuristic-defaults`.
@@ -26,11 +30,15 @@ import json
 from backend import config
 from backend.stats import mae, rmse
 
-FEATURES = config.PAIR_FEATURES
+NEGATIVE = {"S"}   # features that reduce predicted slowdown
 
 
-def _row(z):
-    return [1.0] + [-z[f] if f == "S" else z[f] for f in FEATURES]
+def _features(coefficients):
+    return [k for k in coefficients if k != "intercept"]
+
+
+def _row(z, features):
+    return [1.0] + [-z[f] if f in NEGATIVE else z[f] for f in features]
 
 
 def nnls(rows, targets, free=(0,), iterations=20000, tolerance=1e-12):
@@ -60,22 +68,25 @@ def nnls(rows, targets, free=(0,), iterations=20000, tolerance=1e-12):
     return x
 
 
-def _to_coefficients(vector):
-    return {"intercept": vector[0], **dict(zip(FEATURES, vector[1:]))}
+def _to_coefficients(vector, features):
+    return {"intercept": vector[0], **dict(zip(features, vector[1:]))}
 
 
 def raw_prediction(z, coefficients):
-    row = _row(z)
-    vector = [coefficients["intercept"]] + [coefficients[f] for f in FEATURES]
-    return sum(a * b for a, b in zip(row, vector))
+    features = _features(coefficients)
+    vector = [coefficients["intercept"]] + [coefficients[f] for f in features]
+    return sum(a * b for a, b in zip(_row(z, features), vector))
 
 
-def fit(samples):
+def fit(samples, feature_set=None):
     """samples: [{"pair": (a, b), "z": {...}, "y": float, "yWorst": float}]."""
 
-    rows = [_row(s["z"]) for s in samples]
-    mean_model = _to_coefficients(nnls(rows, [s["y"] for s in samples]))
-    worst_model = _to_coefficients(nnls(rows, [s["yWorst"] for s in samples]))
+    features = list(samples[0]["z"])
+    rows = [_row(s["z"], features) for s in samples]
+    mean_model = _to_coefficients(nnls(rows, [s["y"] for s in samples]), features)
+    worst_model = _to_coefficients(
+        nnls(rows, [s["yWorst"] for s in samples]), features
+    )
 
     # Leave-one-workload-out: every pair containing w is held out.
     workloads = sorted({w for s in samples for w in s["pair"]})
@@ -85,11 +96,12 @@ def fit(samples):
         train = [s for s in samples if held_out not in s["pair"]]
         test = [s for s in samples if held_out in s["pair"]]
 
-        if len(train) < len(FEATURES) + 1 or not test:
+        if len(train) < len(features) + 1 or not test:
             continue
 
         model = _to_coefficients(
-            nnls([_row(s["z"]) for s in train], [s["y"] for s in train])
+            nnls([_row(s["z"], features) for s in train], [s["y"] for s in train]),
+            features,
         )
         for s in test:
             predicted.append(max(0.0, raw_prediction(s["z"], model)))
@@ -101,6 +113,7 @@ def fit(samples):
 
     return {
         "source": "calibrated",
+        "featureSet": feature_set,
         "coefficients": mean_model,
         "worstCoefficients": worst_model,
         "trainingMae": mae(training_predictions, [s["y"] for s in samples]),
@@ -112,33 +125,39 @@ def fit(samples):
     }
 
 
-def default_model():
+def default_model(feature_set=None):
+    feature_set = feature_set or config.FEATURE_SET
+    coefficients = dict(config.DEFAULT_COEFFICIENTS[feature_set])
     worst = {
         k: (v * config.DEFAULT_WORST_SCALE if k != "intercept" else v)
-        for k, v in config.DEFAULT_COEFFICIENTS.items()
+        for k, v in coefficients.items()
     }
     return {
         "source": "heuristic-defaults",
-        "coefficients": dict(config.DEFAULT_COEFFICIENTS),
+        "featureSet": feature_set,
+        "coefficients": coefficients,
         "worstCoefficients": worst,
+        "stressorSignatures": dict(config.DEFAULT_SIGNATURES),
         "heldOutRmse": None,
         "profilingMode": None,
     }
 
 
-def model_file(mode):
-    return config.MODEL_DIR / f"coefficients-{mode}.json"
+def model_file(mode, feature_set=None):
+    feature_set = feature_set or config.FEATURE_SET
+    return config.MODEL_DIR / f"coefficients-{mode}-{feature_set}.json"
 
 
 def load_model(mode, platform=None, cpu_model=None):
-    """Calibrated model for this mode and machine, else heuristic defaults."""
+    """Calibrated model for this mode, feature set and machine, else defaults."""
 
     try:
         model = json.loads(model_file(mode).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return default_model()
 
-    expected = {"profilingMode": mode, "platform": platform, "cpuModel": cpu_model}
+    expected = {"profilingMode": mode, "platform": platform, "cpuModel": cpu_model,
+                "featureSet": config.FEATURE_SET}
     mismatches = [
         f"{key} {model.get(key)!r} (current {value!r})"
         for key, value in expected.items()
@@ -157,7 +176,7 @@ def load_model(mode, platform=None, cpu_model=None):
 
 
 def save_model(model):
-    path = model_file(model["profilingMode"])
+    path = model_file(model["profilingMode"], model["featureSet"])
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(model, indent=2), encoding="utf-8")
     return path

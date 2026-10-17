@@ -8,7 +8,7 @@ from itertools import combinations
 import time
 
 from backend import config, profiler
-from backend.features import pair_features
+from backend.features import pair_vector, sa_breakdown
 from backend.fusion import fuse
 from backend.model import pair_cost
 from backend.static_features import analyze_binary
@@ -41,7 +41,7 @@ def pair_table(task_ids, characterized, model):
     for a, b in combinations(sorted(task_ids), 2):
         fa = characterized[a]["fused"]
         fb = characterized[b]["fused"]
-        z = pair_features(fa, fb)
+        z = pair_vector(characterized[a], characterized[b], model)
         cost = pair_cost(
             z, model, fa["meanConfidence"], fb["meanConfidence"], solo[a], solo[b]
         )
@@ -50,6 +50,15 @@ def pair_table(task_ids, characterized, model):
             "taskA": a,
             "taskB": b,
             "features": z,
+            "contributions": (
+                sa_breakdown(
+                    fa, fb,
+                    characterized[a]["profile"]["sensitivity"],
+                    characterized[b]["profile"]["sensitivity"],
+                    model.get("stressorSignatures") or config.DEFAULT_SIGNATURES,
+                )
+                if model.get("featureSet") != "eq" else None
+            ),
             **cost,
             "source": model["source"],
         })

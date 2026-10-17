@@ -10,10 +10,13 @@ s is the static estimate (Algorithm A), d the runtime estimate
 * q = 0 when the runtime profiler cannot observe feature k
   (for example an unsupported perf event), so static evidence is used;
 * otherwise q = Q_MAX * stability * support, where stability falls
-  linearly to 0 as the measurement's coefficient of variation reaches
-  CV_REFERENCE (within-phase window variation in perf mode, run-to-run
-  solo variation in probe mode), and support = min(1, windows /
-  PHASE_MIN_WINDOWS) penalises phases observed in very few windows.
+  linearly to 0 as the measurement's variation reaches a reference
+  (counter modes: the absolute within-phase standard deviation of the
+  [0,1]-normalised measure reaching STD_REFERENCE_WINDOW, so a quantity
+  measured as near zero is still trusted; probe mode: the run-to-run
+  coefficient of variation of solo time reaching CV_REFERENCE_SOLO), and
+  support = min(1, windows / PHASE_MIN_WINDOWS) penalises phases observed
+  in very few windows.
 
 Q_MAX < 1 keeps some static weight even for a clean measurement.
 Plain concatenation would be static and runtime side by side; here the
@@ -23,10 +26,20 @@ weights change per workload, per phase and per feature.
 from backend import config
 from backend.static_features import static_estimates
 
+AGGRESSIVENESS = ("agg_int", "agg_fp", "agg_stream", "agg_cache", "agg_branch")
+
 FEATURES = (
     *(f"u_{r}" for r in config.RESOURCES),
     "footprint", "bandwidth", "stall_fe", "stall_be_mem",
     "stall_be_core", "branch_miss",
+    # How strongly the workload uses each resource a stressor kernel
+    # saturates (sensitivity x aggressiveness model):
+    #   int    share of integer-ALU port capacity used (IPC * mix / ports)
+    #   fp     divider busy fraction or share of vector/FP port capacity
+    #   stream memory bandwidth (LLC-miss traffic / B_socket)
+    #   cache  cache-resident traffic: footprint * LLC hit ratio
+    #   branch branch-miss intensity
+    *AGGRESSIVENESS,
 )
 
 
@@ -34,7 +47,7 @@ def _stability(variation, reference):
     return max(0.0, 1.0 - variation / reference)
 
 
-def _perf_estimates(measures, cvs, static, windows):
+def _perf_estimates(measures, spreads, static, windows):
     # EMON measures the instruction mix at runtime; perf (generic events)
     # does not, so the static mix is used with the measured intensity.
     mix = (
@@ -51,7 +64,7 @@ def _perf_estimates(measures, cvs, static, windows):
             return
         d[feature] = value
         q[feature] = config.Q_MAX * support * _stability(
-            cvs.get(source_key, 0.0), config.CV_REFERENCE_WINDOW
+            spreads.get(source_key, 0.0), config.STD_REFERENCE_WINDOW
         )
 
     intensity = measures.get("intensity")
@@ -72,6 +85,23 @@ def _perf_estimates(measures, cvs, static, windows):
     put("stall_be_core",
         None if be is None or footprint is None else be * (1 - footprint),
         "stall_be")
+
+    ipc = measures.get("ipc")
+    divider = measures.get("divider_busy")
+    miss_ratio = measures.get("llc_miss_ratio")
+    capacity = config.PORT_CAPACITY
+    put("agg_int",
+        None if ipc is None else min(1.0, ipc * mix["int_alu"] / capacity["int_alu"]),
+        "intensity")
+    vector = None if ipc is None else min(1.0, ipc * mix["fp_simd"] / capacity["fp_simd"])
+    put("agg_fp",
+        vector if divider is None else max(divider, vector or 0.0),
+        "intensity")
+    put("agg_stream", measures.get("bandwidth"), "bandwidth")
+    put("agg_cache",
+        None if footprint is None or miss_ratio is None else footprint * (1 - miss_ratio),
+        "footprint")
+    put("agg_branch", measures.get("branch_miss"), "branch_miss")
     return d, q
 
 
@@ -105,7 +135,7 @@ def fuse(static, profile):
     for phase in phase_profile["phases"]:
         if profile["mode"] in ("perf", "emon"):
             d, q = _perf_estimates(
-                phase["measures"], phase["cv"], static, phase["windowCount"]
+                phase["measures"], phase.get("std", {}), static, phase["windowCount"]
             )
         else:
             d, q = _probe_estimates(phase["measures"], profile["solo"]["cv"])

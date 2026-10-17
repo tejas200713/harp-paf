@@ -1,6 +1,8 @@
 """Algorithm B: runtime profiling.
 
-Three interchangeable profilers produce the same output shape:
+Every workload's sensitivity to each shared resource is measured by
+probing (below). Three interchangeable profilers then provide the phase
+profile and resource usage:
 
 * perf mode   - (Linux) `perf stat -I` samples hardware counters in fixed
                 windows; windows are segmented into phases (backend.phases).
@@ -216,6 +218,9 @@ def perf_windows(raw):
             ),
             "stall_fe": _clip(fe / cycles) if fe is not None else None,
             "stall_be": _clip(be / cycles) if be is not None else None,
+            "llc_miss_ratio": (
+                _clip(misses / refs) if misses is not None and refs else None
+            ),
         }
         windows.append({"progress": (start, progress), "measures": measures})
 
@@ -324,6 +329,10 @@ def profile_workload(argv, slot, mode, workdir, key, expected=None):
     started = time.perf_counter()
     solo = solo_times(argv, slot, config.SOLO_REPETITIONS, expected, key)
 
+    # Sensitivity to each shared resource is always measured by probing;
+    # counters (when available) add phases and resource usage.
+    probe = profile_probe(argv, slot, solo, expected, key)
+
     if mode == "perf":
         runtime = profile_perf(argv, slot, workdir / f"{key}.perf.csv", expected, key)
         overhead = runtime["wallSeconds"] / solo["median"] - 1
@@ -331,13 +340,15 @@ def profile_workload(argv, slot, mode, workdir, key, expected=None):
         runtime = profile_emon(argv, slot, workdir / f"{key}.emon.txt", solo, expected, key)
         overhead = runtime["wallSeconds"] / solo["median"] - 1
     else:
-        runtime = profile_probe(argv, slot, solo, expected, key)
+        runtime = probe
         overhead = None
 
     return {
         "mode": mode,
         "solo": solo,
         "runtime": runtime,
+        "sensitivity": probe["sensitivity"],
+        "probeTimes": probe["probeTimes"],
         "phaseProfile": runtime["phaseProfile"],
         "perfOverheadFraction": overhead,
         "profilingSeconds": time.perf_counter() - started,

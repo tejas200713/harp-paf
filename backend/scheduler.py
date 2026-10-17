@@ -7,9 +7,8 @@ idles while work remains, so co-runner choice is the only difference
 between policies.
 
 Policies
-  harp    Phase-aware. For each candidate, the pair features (Eq. 1-8) are
-          computed between the candidate and the sibling's *remaining*
-          phases (its progress is estimated from elapsed time and the
+  harp    Phase-aware. For each candidate, the pair features are computed
+          between the candidate and the sibling's *remaining* phases (its progress is estimated from elapsed time and the
           slowdown predicted when it was started); the candidate with the
           lowest predicted slowdown plus risk (Eq. 9 and the Eq. 11 terms)
           starts. On an idle core the longest workload starts first, so a
@@ -26,7 +25,7 @@ import time
 
 from backend.baselines import port_pressure
 from backend.execution import ProcessGroup, ProcessSpec
-from backend.features import pair_features, remaining
+from backend.features import pair_vector
 from backend.model import slowdown_risk
 
 
@@ -34,7 +33,7 @@ class HarpPolicy:
     name = "harp"
 
     def __init__(self, characterized, model):
-        self.fused = {t: c["fused"] for t, c in characterized.items()}
+        self.characterized = characterized
         self.solo = {t: c["profile"]["solo"]["median"] for t, c in characterized.items()}
         self.model = model
 
@@ -42,11 +41,14 @@ class HarpPolicy:
         return max(candidates, key=lambda t: (self.solo[t], t))
 
     def estimate(self, running, progress, candidate):
-        z = pair_features(remaining(self.fused[running], progress), self.fused[candidate])
+        z = pair_vector(
+            self.characterized[running], self.characterized[candidate],
+            self.model, progress_i=progress,
+        )
         return slowdown_risk(
             z, self.model,
-            self.fused[running]["meanConfidence"],
-            self.fused[candidate]["meanConfidence"],
+            self.characterized[running]["fused"]["meanConfidence"],
+            self.characterized[candidate]["fused"]["meanConfidence"],
         )
 
     def choose(self, running, progress, candidates):

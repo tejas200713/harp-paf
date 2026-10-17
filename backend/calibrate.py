@@ -25,9 +25,26 @@ import statistics
 from backend import config, kernels, profiler, topology
 from backend.analysis import characterize
 from backend.execution import ProcessSpec, run_group
-from backend.features import pair_features
+from backend.features import pair_vector
 from backend.measurement_lock import measurement_lock
 from backend.model import fit, save_model
+
+
+def stressor_signatures(characterized):
+    """Each probe stressor's own fused aggressiveness on its resource.
+
+    Aggressiveness of any workload is normalised by these, so "1.0" means
+    "uses resource k as heavily as stressor k does".
+    """
+
+    signatures = dict(config.DEFAULT_SIGNATURES)
+
+    for name in config.PROBE_KERNELS:
+        if name in characterized:
+            phases = characterized[name]["fused"]["phases"]
+            signatures[name] = sum(p["share"] * p["fused"][f"agg_{name}"] for p in phases)
+
+    return signatures
 
 
 def _timed(specs):
@@ -98,13 +115,17 @@ def calibrate(names, repetitions):
         print(f"  profiled {name}: solo "
               f"{characterized[name]['profile']['solo']['median']:.3f} s", flush=True)
 
+    signatures = stressor_signatures(characterized)
+    provisional = {"featureSet": config.FEATURE_SET, "stressorSignatures": signatures}
+    print(f"  stressor signatures: { {k: round(v, 3) for k, v in signatures.items()} }",
+          flush=True)
     samples = []
 
     for a, b in combinations_with_replacement(names, 2):
         slow_a, slow_b = co_run(argvs[a], argvs[b], slot, repetitions, rng)
         sample = {
             "pair": [a, b],
-            "z": pair_features(characterized[a]["fused"], characterized[b]["fused"]),
+            "z": pair_vector(characterized[a], characterized[b], provisional),
             "y": 0.5 * (slow_a + slow_b),
             "yWorst": max(slow_a, slow_b),
             "slowdowns": [slow_a, slow_b],
@@ -112,9 +133,13 @@ def calibrate(names, repetitions):
         samples.append(sample)
         print(f"  {a:>6} + {b:<6} measured mean slowdown {sample['y']:+.3f}", flush=True)
 
-    model = fit(samples)
+    model = fit(samples, config.FEATURE_SET)
     topo = topology.discover()
     model.update({
+        "stressorSignatures": signatures,
+        "kernelSensitivity": {
+            n: characterized[n]["profile"]["sensitivity"] for n in names
+        },
         "profilingMode": mode,
         "platform": topo["platform"],
         "kernels": names,

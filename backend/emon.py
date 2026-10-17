@@ -136,11 +136,15 @@ def windows(samples):
         / config.EMON_INTERVAL_SECONDS
     peak = max(a.get("INST_RETIRED.ANY", 0) + b.get("INST_RETIRED.ANY", 0)
                for a, b in pairs)
-    active = [
-        (a, b) for a, b in pairs
-        if a.get("INST_RETIRED.ANY", 0) + b.get("INST_RETIRED.ANY", 0)
-        >= config.EMON_ACTIVE_FRACTION * peak
-    ]
+    def instructions(pair):
+        return pair[0].get("INST_RETIRED.ANY", 0) + pair[1].get("INST_RETIRED.ANY", 0)
+
+    active = [p for p in pairs if instructions(p) >= config.EMON_ACTIVE_FRACTION * peak]
+
+    if len(active) > 2:
+        typical = sorted(instructions(p) for p in active)[len(active) // 2]
+        full = [p for p in active if instructions(p) >= config.EDGE_WINDOW_FRACTION * typical]
+        active = full or active
     total_instructions = sum(
         a["INST_RETIRED.ANY"] + b["INST_RETIRED.ANY"] for a, b in active
     )
@@ -189,6 +193,8 @@ def windows(samples):
             "branch_miss": _clip(branch_misses / kilo_a / config.BRANCH_MPKI_REFERENCE),
             "stall_fe": _clip(b.get("IDQ_BUBBLES.CORE", 0) / slots_b),
             "stall_be": _clip(b.get("TOPDOWN.BACKEND_BOUND_SLOTS", 0) / slots_b),
+            "divider_busy": _clip(divider),
+            "llc_miss_ratio": _clip(misses / references) if references else 0.0,
             **{f"mix_{r}": v / mix_total for r, v in mix.items()},
         }
         result.append({"progress": (start, progress), "measures": measures})
