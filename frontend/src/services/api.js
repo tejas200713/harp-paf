@@ -1,3 +1,9 @@
+const USE_SAMPLES = import.meta.env.VITE_USE_SAMPLES === '1';
+
+async function sample(name) {
+  const response = await fetch(`/samples/${name}.json`);
+  return response.json();
+}
 
 const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL ||
@@ -48,12 +54,20 @@ async function apiRequest(path, options = {}) {
 }
 
 export function checkHealth() {
+  if (USE_SAMPLES) return sample('health');
   return apiRequest('/health');
 }
 
-export function createJob(files, language = 'cpp') {
-  if (!Array.isArray(files) || files.length !== 4) {
-    throw new Error('Exactly four source files are required.');
+export function createJob(files, language = 'cpp', repetitions = 5) {
+  if (USE_SAMPLES) {
+    return Promise.resolve({
+      jobId: '609315c9a54f4a64b733cb9ff93e5478',
+      status: 'running'
+    });
+  }
+
+  if (!Array.isArray(files) || files.length < 2 || files.length > 16) {
+    throw new Error('Between 2 and 16 source files are required.');
   }
 
   if (!['c', 'cpp'].includes(language)) {
@@ -62,6 +76,7 @@ export function createJob(files, language = 'cpp') {
 
   const formData = new FormData();
   formData.append('language', language);
+  formData.append('repetitions', String(repetitions));
 
   files.forEach((file) => {
     formData.append('files', file);
@@ -74,6 +89,8 @@ export function createJob(files, language = 'cpp') {
 }
 
 export function getJob(id) {
+  if (USE_SAMPLES) return sample('job');
+
   if (!id) {
     throw new Error('Job ID is required.');
   }
@@ -82,7 +99,10 @@ export function getJob(id) {
     `/api/jobs/${encodeURIComponent(id)}`
   );
 }
+
 export function getResults(id) {
+  if (USE_SAMPLES) return sample('results');
+
   if (!id) {
     throw new Error('Job ID is required.');
   }
@@ -93,9 +113,16 @@ export function getResults(id) {
 }
 
 export function listJobs() {
+  if (USE_SAMPLES) return sample('jobs');
   return apiRequest('/api/jobs');
 }
 
 export function getSystem() {
+  if (USE_SAMPLES) return sample('system');
   return apiRequest('/api/system');
+}
+
+export function getWorkloads() {
+  if (USE_SAMPLES) return sample('workloads');
+  return apiRequest('/api/workloads');
 }

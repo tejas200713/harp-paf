@@ -1,0 +1,86 @@
+[
+  {
+    "file": "w1_integer_hash.cpp",
+    "kind": "integer-alu",
+    "description": "Xorshift hashing; integer ALU and multiplier bound",
+    "sha256": "30c1f5c2378cf300d99d3b18a368efd06dd09f5f756d4b1a83cea1ecb4dfab3d",
+    "language": "cpp"
+  },
+  {
+    "file": "w2_integer_divide.cpp",
+    "kind": "integer-divide",
+    "description": "Dependent 64-bit division and modulo; divider bound",
+    "sha256": "064a1dc635e1cd029e322ca9312c64355ddd387a9e1a982e1ff31fee8532ca2b",
+    "language": "cpp"
+  },
+  {
+    "file": "w3_fp_sqrt_chain.cpp",
+    "kind": "scalar-fp",
+    "description": "Dependent square-root and divide chain; scalar FP bound",
+    "sha256": "fa50025add180a6c7e8d667b5ceb91f2f45e5f94fcab4808c2cafbc99303bc00",
+    "language": "cpp"
+  },
+  {
+    "file": "w4_simd_saxpy.cpp",
+    "kind": "simd",
+    "description": "Vectorised single-precision update on L1-resident arrays",
+    "sha256": "d94419328560a35f53de1fa1ab9dc10d28d132bd0138af5bb55dab49925222f2",
+    "language": "cpp"
+  },
+  {
+    "file": "w5_memory_stream.cpp",
+    "kind": "memory-bandwidth",
+    "description": "Sequential read-modify-write over 64 MiB",
+    "sha256": "b576297b7f1175fc46feba34e9846f34de59d538455633a273804ad755486078",
+    "language": "cpp"
+  },
+  {
+    "file": "w6_pointer_chase.cpp",
+    "kind": "memory-latency",
+    "description": "Dependent random loads through a 32 MiB cycle",
+    "sha256": "7cc3e92587e471e51b1e23bf6feba3c2b29b115409b23c4e566bece872dc4adb",
+    "language": "cpp"
+  },
+  {
+    "file": "w7_branch_heavy.cpp",
+    "kind": "branch",
+    "description": "Data-dependent unpredictable branches",
+    "sha256": "aa3b41d156714c0d77760061977683aff29cf58012dc4799ddfdaeebc6e11eba",
+    "language": "cpp"
+  },
+  {
+    "file": "w8_phased_mix.cpp",
+    "kind": "multi-phase",
+    "description": "Integer phase, then streaming phase, then branch phase",
+    "sha256": "29c8f340e193f62914f1ff179a917278dafb31f7407cd7fe332466c29b8243db",
+    "language": "cpp"
+  },
+  {
+    "file": "task1.cpp",
+    "kind": "legacy-demo",
+    "description": "Original demo: integer sum (milliseconds; too short for measurement)",
+    "sha256": "173ac9d777c6d28b05e9a971f0b398ddc89b5967c36fdebe2f2765dec13511f7",
+    "language": "cpp"
+  },
+  {
+    "file": "task2.cpp",
+    "kind": "legacy-demo",
+    "description": "Original demo: modulo loop (milliseconds; too short for measurement)",
+    "sha256": "aa498b3bac09da6488ca83db41b2803a245e9f0f0cb6fd702beb9a5297f2b4a5",
+    "language": "cpp"
+  },
+  {
+    "file": "task3.cpp",
+    "kind": "legacy-demo",
+    "description": "Original demo: vector traversal (milliseconds; too short for measurement)",
+    "sha256": "8cfad94462b345f071c0d9b4c1fdf16b13a8a5fcb761798c766dfbcf0c1a011c",
+    "language": "cpp"
+  },
+  {
+    "file": "task4.cpp",
+    "kind": "legacy-demo",
+    "description": "Original demo: square-root loop (milliseconds; too short for measurement)",
+    "sha256": "83f12b7d6e087ac1529030a9c2c555cdf3556f580e49961b2e3e49fe0bcd6e47",
+    "language": "cpp"
+  }
+]
