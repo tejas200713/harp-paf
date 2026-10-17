@@ -790,9 +790,12 @@ function LiveResults() {
     return () => { active = false; };
   }, [id]);
 
+  const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+
   if (error) {
     return (
       <Page title="Results dashboard">
+        <AnalysisNavTabs id={targetId} activeTab="results"/>
         <div className="form-error"><AlertTriangle size={16}/>{error}</div>
       </Page>
     );
@@ -801,10 +804,12 @@ function LiveResults() {
   if (!data) {
     return (
       <Page title="Results dashboard">
+        <AnalysisNavTabs id={targetId} activeTab="results"/>
         <Card title="Loading measured results"><p>Fetching benchmark results from backend...</p></Card>
       </Page>
     );
   }
+
 
   const s = data.summary || {};
   const methods = data.methods || {};
@@ -1080,38 +1085,15 @@ function LiveSchedule() {
   const [hoveredTask, setHoveredTask] = useState(null);
   const [tooltipPos, setTooltipPos] = useState({ x: 0, y: 0 });
 
+  const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+
   useEffect(() => {
     let active = true;
-    const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
     getResults(targetId)
       .then(res => { if (active) setData(res); })
       .catch(err => { if (active) setError(err.message); });
     return () => { active = false; };
-  }, [id]);
-
-  if (error) {
-    return (
-      <Page title="Schedule view">
-        <div className="form-error"><AlertTriangle size={16}/>{error}</div>
-      </Page>
-    );
-  }
-
-  if (!data) {
-    return (
-      <Page title="Schedule view">
-        <Card title="Loading schedule"><p>Fetching timeline data...</p></Card>
-      </Page>
-    );
-  }
-
-  const timelines = data.timelines || {};
-  const timeline = timelines[selectedMethod];
-  const tasksMap = useMemo(() => {
-    const map = {};
-    (data.tasks || []).forEach(t => { map[t.id] = t; });
-    return map;
-  }, [data]);
+  }, [targetId]);
 
   // Available methods in timelines
   const timelineOptions = [
@@ -1131,11 +1113,16 @@ function LiveSchedule() {
     return '#4bd6d2';
   };
 
-  const maxTime = useMemo(() => {
-    if (!timeline || !timeline.length) return 3.5;
+  const timelines = data?.timelines || {};
+  const timeline = timelines[selectedMethod];
+  const tasksMap = {};
+  (data?.tasks || []).forEach(t => { tasksMap[t.id] = t; });
+
+  let maxTime = 3.5;
+  if (timeline && timeline.length) {
     const maxEnd = Math.max(...timeline.map(t => t.end));
-    return Math.ceil(maxEnd * 10) / 10 + 0.1;
-  }, [timeline]);
+    maxTime = Math.ceil(maxEnd * 10) / 10 + 0.1;
+  }
 
   const ticks = [];
   for (let t = 0; t <= maxTime; t += 0.5) {
@@ -1162,169 +1149,182 @@ function LiveSchedule() {
               ))}
             </select>
           </label>
-          <Link className="btn btn-secondary" to={`/output/${id || '609315c9a54f4a64b733cb9ff93e5478'}`}>
+          <Link className="btn btn-secondary" to={`/output/${targetId}`}>
             <Terminal size={14}/> View Stdout
           </Link>
         </div>
       }
     >
-      <AnalysisNavTabs id={id || '609315c9a54f4a64b733cb9ff93e5478'} activeTab="schedule"/>
-      <div className="metric-grid">
-        <MetricCard
-          label="Scheduling mode"
-          value={selectedMethod === 'harp' ? 'Dynamic' : selectedMethod.includes('static') ? 'Static' : 'Baseline'}
-          unit=""
-          detail={timelineOptions.find(o => o.key === selectedMethod)?.label}
-          icon={Clock3}
-        />
-        <MetricCard
-          label="Schedule makespan"
-          value={timeline && timeline.length ? `${Math.max(...timeline.map(t => t.end)).toFixed(2)}` : '—'}
-          unit="s"
-          detail="First repetition timeline length"
-          icon={Gauge}
-        />
-        <MetricCard
-          label="Tasks scheduled"
-          value={timeline?.length || 0}
-          unit="tasks"
-          detail="Workloads on sibling threads"
-          icon={Activity}
-        />
-        <MetricCard
-          label="Physical core"
-          value="Core 0"
-          unit=""
-          detail="CPUs 0 & 1 (SMT siblings)"
-          icon={Cpu}
-        />
-      </div>
+      <AnalysisNavTabs id={targetId} activeTab="schedule"/>
 
-      {!timeline || timeline.length === 0 ? (
-        <Card title="No Per-Thread Schedule Available">
-          <div className="empty-state">
-            <span className="empty-icon"><Cpu size={24}/></span>
-            <h3>No per-thread schedule (the OS decides / runs one at a time)</h3>
-            <p>
-              {selectedMethod === 'linux'
-                ? 'Under the OS default method, all workloads are submitted concurrently and the operating system kernel dispatches and preempts threads dynamically across all available logical cores.'
-                : selectedMethod === 'serial'
-                ? 'Under the serial baseline, each workload executes alone sequentially without any SMT co-runner.'
-                : 'Timeline records are not generated for this configuration.'}
-            </p>
-          </div>
-        </Card>
-      ) : (
-        <Card
-          title={`Gantt Timeline: ${timelineOptions.find(o => o.key === selectedMethod)?.label}`}
-          subtitle="Hover over any task bar to inspect start/end time, co-runner, and predicted slowdown"
-        >
-          <div className="gantt-wrap">
-            {/* CPU 0 */}
-            <div className="gantt-track-row">
-              <div className="gantt-cpu-label">
-                <Cpu size={15} color="#4bd6d2"/>
-                <span>Hardware thread CPU 0</span>
-              </div>
-              <div className="gantt-timeline">
-                {timeline.filter(t => t.cpu === 0).map(item => {
-                  const leftPct = (item.start / maxTime) * 100;
-                  const widthPct = ((item.end - item.start) / maxTime) * 100;
-                  const taskObj = tasksMap[item.task];
-                  const color = getTaskBarColor(item.task);
+      {error && (
+        <div className="form-error"><AlertTriangle size={16}/>{error}</div>
+      )}
 
-                  return (
-                    <div
-                      key={item.task}
-                      className="gantt-bar-item"
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${Math.max(widthPct, 2)}%`,
-                        background: color
-                      }}
-                      onMouseEnter={e => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top - 10 });
-                        setHoveredTask({ ...item, filename: taskObj?.filename || item.task });
-                      }}
-                      onMouseLeave={() => setHoveredTask(null)}
-                    >
-                      {item.task}: {taskObj?.filename ? taskObj.filename.split('.')[0] : item.task}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* CPU 1 */}
-            <div className="gantt-track-row">
-              <div className="gantt-cpu-label">
-                <Cpu size={15} color="#8a7cf6"/>
-                <span>Hardware thread CPU 1</span>
-              </div>
-              <div className="gantt-timeline">
-                {timeline.filter(t => t.cpu === 1).map(item => {
-                  const leftPct = (item.start / maxTime) * 100;
-                  const widthPct = ((item.end - item.start) / maxTime) * 100;
-                  const taskObj = tasksMap[item.task];
-                  const color = getTaskBarColor(item.task);
-
-                  return (
-                    <div
-                      key={item.task}
-                      className="gantt-bar-item"
-                      style={{
-                        left: `${leftPct}%`,
-                        width: `${Math.max(widthPct, 2)}%`,
-                        background: color
-                      }}
-                      onMouseEnter={e => {
-                        const rect = e.currentTarget.getBoundingClientRect();
-                        setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top - 10 });
-                        setHoveredTask({ ...item, filename: taskObj?.filename || item.task });
-                      }}
-                      onMouseLeave={() => setHoveredTask(null)}
-                    >
-                      {item.task}: {taskObj?.filename ? taskObj.filename.split('.')[0] : item.task}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* X-axis Ticks */}
-            <div className="gantt-axis">
-              {ticks.map(t => {
-                const leftPct = (t / maxTime) * 100;
-                return (
-                  <span key={t} className="gantt-tick" style={{ left: `${leftPct}%` }}>
-                    {t.toFixed(1)} s
-                  </span>
-                );
-              })}
-            </div>
-          </div>
+      {!data && !error && (
+        <Card title="Loading schedule">
+          <p style={{ color: '#8ea0b7' }}>Fetching timeline data...</p>
         </Card>
       )}
 
-      {/* Floating Tooltip */}
-      {hoveredTask && (
-        <div className="gantt-tooltip" style={{ left: tooltipPos.x, top: tooltipPos.y, transform: 'translate(-50%, -100%)' }}>
-          <b>{hoveredTask.task} — {hoveredTask.filename}</b>
-          <div>Timeline: {hoveredTask.start.toFixed(2)} s → {hoveredTask.end.toFixed(2)} s ({(hoveredTask.end - hoveredTask.start).toFixed(2)} s)</div>
-          <div>started next to {hoveredTask.startedWith || 'None'}, predicted slowdown +{(hoveredTask.predictedSlowdown * 100).toFixed(1)} %</div>
-        </div>
-      )}
-
-      {/* Code output viewer */}
       {data && (
-        <CodeOutputViewer
-          outputs={data.outputByTask}
-          compilationResults={data.compilationResults}
-          tasks={data.tasks}
-          title="Scheduled Workload Output & Verification"
-          subtitle="Verification logs and runtime output for all tasks in this schedule"
-        />
+        <>
+          <div className="metric-grid">
+            <MetricCard
+              label="Scheduling mode"
+              value={selectedMethod === 'harp' ? 'Dynamic' : selectedMethod.includes('static') ? 'Static' : 'Baseline'}
+              unit=""
+              detail={timelineOptions.find(o => o.key === selectedMethod)?.label}
+              icon={Clock3}
+            />
+            <MetricCard
+              label="Schedule makespan"
+              value={timeline && timeline.length ? `${Math.max(...timeline.map(t => t.end)).toFixed(2)}` : '—'}
+              unit="s"
+              detail="First repetition timeline length"
+              icon={Gauge}
+            />
+            <MetricCard
+              label="Tasks scheduled"
+              value={timeline?.length || 0}
+              unit="tasks"
+              detail="Workloads on sibling threads"
+              icon={Activity}
+            />
+            <MetricCard
+              label="Physical core"
+              value="Core 0"
+              unit=""
+              detail="CPUs 0 & 1 (SMT siblings)"
+              icon={Cpu}
+            />
+          </div>
+
+          {!timeline || timeline.length === 0 ? (
+            <Card title="No Per-Thread Schedule Available">
+              <div className="empty-state">
+                <span className="empty-icon"><Cpu size={24}/></span>
+                <h3>No per-thread schedule (the OS decides / runs one at a time)</h3>
+                <p>
+                  {selectedMethod === 'linux'
+                    ? 'Under the OS default method, all workloads are submitted concurrently and the operating system kernel dispatches and preempts threads dynamically across all available logical cores.'
+                    : selectedMethod === 'serial'
+                    ? 'Under the serial baseline, each workload executes alone sequentially without any SMT co-runner.'
+                    : 'Timeline records are not generated for this configuration.'}
+                </p>
+              </div>
+            </Card>
+          ) : (
+            <Card
+              title={`Gantt Timeline: ${timelineOptions.find(o => o.key === selectedMethod)?.label}`}
+              subtitle="Hover over any task bar to inspect start/end time, co-runner, and predicted slowdown"
+            >
+              <div className="gantt-wrap">
+                {/* CPU 0 */}
+                <div className="gantt-track-row">
+                  <div className="gantt-cpu-label">
+                    <Cpu size={15} color="#4bd6d2"/>
+                    <span>Hardware thread CPU 0</span>
+                  </div>
+                  <div className="gantt-timeline">
+                    {timeline.filter(t => t.cpu === 0).map(item => {
+                      const leftPct = (item.start / maxTime) * 100;
+                      const widthPct = ((item.end - item.start) / maxTime) * 100;
+                      const taskObj = tasksMap[item.task];
+                      const color = getTaskBarColor(item.task);
+
+                      return (
+                        <div
+                          key={item.task}
+                          className="gantt-bar-item"
+                          style={{
+                            left: `${leftPct}%`,
+                            width: `${Math.max(widthPct, 2)}%`,
+                            background: color
+                          }}
+                          onMouseEnter={e => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top - 10 });
+                            setHoveredTask({ ...item, filename: taskObj?.filename || item.task });
+                          }}
+                          onMouseLeave={() => setHoveredTask(null)}
+                        >
+                          {item.task}: {taskObj?.filename ? taskObj.filename.split('.')[0] : item.task}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* CPU 1 */}
+                <div className="gantt-track-row">
+                  <div className="gantt-cpu-label">
+                    <Cpu size={15} color="#8a7cf6"/>
+                    <span>Hardware thread CPU 1</span>
+                  </div>
+                  <div className="gantt-timeline">
+                    {timeline.filter(t => t.cpu === 1).map(item => {
+                      const leftPct = (item.start / maxTime) * 100;
+                      const widthPct = ((item.end - item.start) / maxTime) * 100;
+                      const taskObj = tasksMap[item.task];
+                      const color = getTaskBarColor(item.task);
+
+                      return (
+                        <div
+                          key={item.task}
+                          className="gantt-bar-item"
+                          style={{
+                            left: `${leftPct}%`,
+                            width: `${Math.max(widthPct, 2)}%`,
+                            background: color
+                          }}
+                          onMouseEnter={e => {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            setTooltipPos({ x: rect.left + rect.width / 2, y: rect.top - 10 });
+                            setHoveredTask({ ...item, filename: taskObj?.filename || item.task });
+                          }}
+                          onMouseLeave={() => setHoveredTask(null)}
+                        >
+                          {item.task}: {taskObj?.filename ? taskObj.filename.split('.')[0] : item.task}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* X-axis Ticks */}
+                <div className="gantt-axis">
+                  {ticks.map(t => {
+                    const leftPct = (t / maxTime) * 100;
+                    return (
+                      <span key={t} className="gantt-tick" style={{ left: `${leftPct}%` }}>
+                        {t.toFixed(1)} s
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            </Card>
+          )}
+
+          {/* Floating Tooltip */}
+          {hoveredTask && (
+            <div className="gantt-tooltip" style={{ left: tooltipPos.x, top: tooltipPos.y, transform: 'translate(-50%, -100%)' }}>
+              <b>{hoveredTask.task} — {hoveredTask.filename}</b>
+              <div>Timeline: {hoveredTask.start.toFixed(2)} s → {hoveredTask.end.toFixed(2)} s ({(hoveredTask.end - hoveredTask.start).toFixed(2)} s)</div>
+              <div>started next to {hoveredTask.startedWith || 'None'}, predicted slowdown +{(hoveredTask.predictedSlowdown * 100).toFixed(1)} %</div>
+            </div>
+          )}
+
+          {/* Code output viewer */}
+          <CodeOutputViewer
+            outputs={data.outputByTask}
+            compilationResults={data.compilationResults}
+            tasks={data.tasks}
+            title="Scheduled Workload Output & Verification"
+            subtitle="Verification logs and runtime output for all tasks in this schedule"
+          />
+        </>
       )}
     </Page>
   );
@@ -1353,8 +1353,10 @@ function LivePairAnalysis() {
     return () => { active = false; };
   }, [id]);
 
-  if (error) return <Page title="Pair analysis"><div className="form-error"><AlertTriangle size={16}/>{error}</div></Page>;
-  if (!data) return <Page title="Pair analysis"><Card title="Loading pair analysis"><p>Fetching pair predictions...</p></Card></Page>;
+  const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+
+  if (error) return <Page title="Pair analysis"><AnalysisNavTabs id={targetId} activeTab="pairs"/><div className="form-error"><AlertTriangle size={16}/>{error}</div></Page>;
+  if (!data) return <Page title="Pair analysis"><AnalysisNavTabs id={targetId} activeTab="pairs"/><Card title="Loading pair analysis"><p>Fetching pair predictions...</p></Card></Page>;
 
   const pairs = data.pairs || [];
   const ids = Array.from(new Set(pairs.flatMap(p => [p.taskA, p.taskB]))).sort();
@@ -1622,8 +1624,10 @@ function LiveTaskMetrics() {
     return () => { active = false; };
   }, [id]);
 
-  if (error) return <Page title="Task metrics"><div className="form-error"><AlertTriangle size={16}/>{error}</div></Page>;
-  if (!data) return <Page title="Task metrics"><Card title="Loading task metrics"><p>Fetching task telemetry...</p></Card></Page>;
+  const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+
+  if (error) return <Page title="Task metrics"><AnalysisNavTabs id={targetId} activeTab="tasks"/><div className="form-error"><AlertTriangle size={16}/>{error}</div></Page>;
+  if (!data) return <Page title="Task metrics"><AnalysisNavTabs id={targetId} activeTab="tasks"/><Card title="Loading task metrics"><p>Fetching task telemetry...</p></Card></Page>;
 
   const tasks = data.tasks || [];
 
@@ -1851,8 +1855,10 @@ function LivePredictionAnalysis() {
     return () => { active = false; };
   }, [id]);
 
-  if (error) return <Page title="Prediction analysis"><div className="form-error"><AlertTriangle size={16}/>{error}</div></Page>;
-  if (!data) return <Page title="Prediction analysis"><Card title="Loading model"><p>Fetching model data...</p></Card></Page>;
+  const targetId = id || '609315c9a54f4a64b733cb9ff93e5478';
+
+  if (error) return <Page title="Prediction analysis"><AnalysisNavTabs id={targetId} activeTab="predictions"/><div className="form-error"><AlertTriangle size={16}/>{error}</div></Page>;
+  if (!data) return <Page title="Prediction analysis"><AnalysisNavTabs id={targetId} activeTab="predictions"/><Card title="Loading model"><p>Fetching model data...</p></Card></Page>;
 
   const model = data.model || {};
   const prediction = data.prediction || {};

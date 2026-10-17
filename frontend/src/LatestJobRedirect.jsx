@@ -4,8 +4,23 @@ import { listJobs } from './services/api.js';
 
 const BENCHMARK_JOB_ID = '609315c9a54f4a64b733cb9ff93e5478';
 
+function getInitialTargetId() {
+  try {
+    const raw = localStorage.getItem('harp_custom_jobs_v1');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const completed = parsed.find(j => j.status === 'completed');
+        if (completed?.jobId) return completed.jobId;
+        if (parsed[0]?.jobId) return parsed[0].jobId;
+      }
+    }
+  } catch {}
+  return BENCHMARK_JOB_ID;
+}
+
 export default function LatestJobRedirect({ destination }) {
-  const [targetId, setTargetId] = useState(null);
+  const [targetId, setTargetId] = useState(getInitialTargetId);
 
   useEffect(() => {
     let active = true;
@@ -13,11 +28,8 @@ export default function LatestJobRedirect({ destination }) {
     listJobs()
       .then(jobs => {
         if (!active) return;
-        // 1. Prefer a completed job (custom user job first, or benchmark)
         const completed = (jobs || []).find(job => job.status === 'completed');
-        // 2. Fall back to any available job in the system
         const anyJob = (jobs || [])[0];
-        // 3. Absolute fallback to the benchmark reference dataset
         const chosen = completed?.jobId || anyJob?.jobId || BENCHMARK_JOB_ID;
         setTargetId(chosen);
       })
@@ -31,13 +43,6 @@ export default function LatestJobRedirect({ destination }) {
     };
   }, []);
 
-  if (!targetId) {
-    return (
-      <div style={{ padding: 32, color: '#8898ae' }}>
-        Loading {destination} view...
-      </div>
-    );
-  }
-
   return <Navigate to={`/${destination}/${targetId}`} replace />;
 }
+
