@@ -1,0 +1,283 @@
+{
+  "operatingSystem": "Windows-11-10.0.26300-SP0",
+  "pythonVersion": "3.13.7",
+  "architecture": "AMD64",
+  "cpuModel": "12th Gen Intel(R) Core(TM) i5-1235U",
+  "logicalCpuCount": 12,
+  "allowedCpuIds": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11
+  ],
+  "availableCpuCount": 12,
+  "physicalCoreCount": 10,
+  "threadsPerCore": 2,
+  "cores": [
+    {
+      "cpus": [
+        0,
+        1
+      ],
+      "efficiencyClass": 1
+    },
+    {
+      "cpus": [
+        2,
+        3
+      ],
+      "efficiencyClass": 1
+    },
+    {
+      "cpus": [
+        4
+      ],
+      "efficiencyClass": 0
+    },
+    {
+      "cpus": [
+        5
+      ],
+      "efficiencyClass": 0
+    },
+    {
+      "cpus": [
+        6
+      ],
+      "efficiencyClass": 0
+    },
+    {
+      "cpus": [
+        7
+      ],
+      "efficiencyClass": 0
+    },
+    {
+      "cpus": [
+        8
+      ],
+      "efficiencyClass": 0
+    },
+    {
+      "cpus": [
+        9
+      ],
+      "efficiencyClass": 0
+    },
+    {
+      "cpus": [
+        10
+      ],
+      "efficiencyClass": 0
+    },
+    {
+      "cpus": [
+        11
+      ],
+      "efficiencyClass": 0
+    }
+  ],
+  "hybrid": true,
+  "smtSiblingPairs": [
+    [
+      0,
+      1
+    ],
+    [
+      2,
+      3
+    ]
+  ],
+  "taskCpuPairs": [
+    [
+      0,
+      1
+    ],
+    [
+      2,
+      3
+    ]
+  ],
+  "harnessCpu": 11,
+  "verifiedSmtSiblingMapping": true,
+  "virtualized": false,
+  "cacheTopology": [
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "48K",
+      "sharedCpuList": "0,1"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "32K",
+      "sharedCpuList": "0,1"
+    },
+    {
+      "level": "2",
+      "type": "Unified",
+      "size": "1280K",
+      "sharedCpuList": "0,1"
+    },
+    {
+      "level": "3",
+      "type": "Unified",
+      "size": "12288K",
+      "sharedCpuList": "0,1,2,3,4,5,6,7,8,9,10,11"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "48K",
+      "sharedCpuList": "2,3"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "32K",
+      "sharedCpuList": "2,3"
+    },
+    {
+      "level": "2",
+      "type": "Unified",
+      "size": "1280K",
+      "sharedCpuList": "2,3"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "32K",
+      "sharedCpuList": "4"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "64K",
+      "sharedCpuList": "4"
+    },
+    {
+      "level": "2",
+      "type": "Unified",
+      "size": "2048K",
+      "sharedCpuList": "4,5,6,7"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "32K",
+      "sharedCpuList": "5"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "64K",
+      "sharedCpuList": "5"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "32K",
+      "sharedCpuList": "6"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "64K",
+      "sharedCpuList": "6"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "32K",
+      "sharedCpuList": "7"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "64K",
+      "sharedCpuList": "7"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "32K",
+      "sharedCpuList": "8"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "64K",
+      "sharedCpuList": "8"
+    },
+    {
+      "level": "2",
+      "type": "Unified",
+      "size": "2048K",
+      "sharedCpuList": "8,9,10,11"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "32K",
+      "sharedCpuList": "9"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "64K",
+      "sharedCpuList": "9"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "32K",
+      "sharedCpuList": "10"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "64K",
+      "sharedCpuList": "10"
+    },
+    {
+      "level": "1",
+      "type": "Data",
+      "size": "32K",
+      "sharedCpuList": "11"
+    },
+    {
+      "level": "1",
+      "type": "Instruction",
+      "size": "64K",
+      "sharedCpuList": "11"
+    }
+  ],
+  "compilerGcc": "gcc (Rev6, Built by MSYS2 project) 16.2.0",
+  "compilerGpp": "g++ (Rev6, Built by MSYS2 project) 16.2.0",
+  "compilerClang": "Unavailable",
+  "objdump": "GNU objdump (GNU Binutils) 2.47.20260726",
+  "hardwareCountersAvailable": false,
+  "counterTool": "emon",
+  "perfSupportedEvents": null,
+  "counterUnavailableReason": "Failed to communicate with sep driver. Please check if driver is properly loaded",
+  "profilingMode": "probe",
+  "smtCoresUsed": 1,
+  "objective": "makespan",
+  "model": {
+    "source": "heuristic-defaults",
+    "heldOutMae": null,
+    "sampleCount": null,
+    "fittedAt": null,
+    "note": null
+  },
+  "executionEnvironment": "Native Windows"
+}

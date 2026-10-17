@@ -389,6 +389,9 @@ def get_system():
         "availableCpuCount": len(topo["allowedCpus"]),
         "physicalCoreCount": topo["physicalCoreCount"],
         "threadsPerCore": topo["threadsPerCore"],
+        # [{cpus, efficiencyClass}]; a higher class is a faster core (P-core).
+        "cores": topo["cores"],
+        "hybrid": topo["hybrid"],
         "smtSiblingPairs": topo["smtPairs"],
         "taskCpuPairs": topo["taskPairs"],
         "harnessCpu": topo["harnessCpu"],

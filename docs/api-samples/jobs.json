@@ -1,0 +1,24 @@
+[
+  {
+    "jobId": "609315c9a54f4a64b733cb9ff93e5478",
+    "status": "completed",
+    "createdAt": "2026-10-17T09:50:05.055355+00:00",
+    "language": "cpp",
+    "filenames": [
+      "w1_integer_hash.cpp",
+      "w2_integer_divide.cpp",
+      "w3_fp_sqrt_chain.cpp",
+      "w4_simd_saxpy.cpp",
+      "w5_memory_stream.cpp",
+      "w6_pointer_chase.cpp",
+      "w7_branch_heavy.cpp",
+      "w8_phased_mix.cpp"
+    ],
+    "profilingMode": "emon",
+    "baselineName": "Random",
+    "baselineMakespan": 3.494858550009667,
+    "selectedMakespan": 3.202224849999766,
+    "speedup": 1.0913844947552394,
+    "runtimeReductionPercent": 8.37326306122151
+  }
+]
