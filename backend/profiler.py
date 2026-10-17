@@ -25,7 +25,7 @@ import subprocess
 import time
 
 from backend import config, emon, kernels, phases, topology
-from backend.execution import ProcessSpec, run_group
+from backend.execution import ProcessGroup, ProcessSpec, run_group
 from backend.stats import cv
 
 
@@ -88,6 +88,24 @@ def profiling_mode():
     return status["tool"] if status["available"] else "probe"
 
 
+def warm_up(cpus, seconds=None):
+    """Keep `cpus` fully busy for a while so clock speeds settle."""
+
+    seconds = config.WARMUP_SECONDS if seconds is None else seconds
+
+    if seconds <= 0:
+        return
+
+    group = ProcessGroup()
+    try:
+        for index, cpu in enumerate(cpus):
+            group.start(ProcessSpec(f"warmup{index}", kernels.argv("int"), (cpu,),
+                                    background=True))
+        time.sleep(seconds)
+    finally:
+        group.close()
+
+
 def _check(entry, expected, label):
     if entry.get("exitCode") != 0:
         raise RuntimeError(
@@ -102,6 +120,10 @@ def solo_times(argv, slot, repetitions, expected=None, label="task"):
     """Wall time with the SMT sibling idle."""
 
     samples = []
+
+    for _ in range(config.WARMUP_RUNS):
+        warmup = run_group([ProcessSpec("task", argv, (slot[0],))])
+        _check(warmup["processes"]["task"], expected, label)
 
     for _ in range(repetitions):
         run = run_group([ProcessSpec("task", argv, (slot[0],))])

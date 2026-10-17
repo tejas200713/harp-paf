@@ -19,9 +19,11 @@ from backend.approved_workloads import get_expected_output
 from backend.baselines import port_matching, port_pressure
 from backend.benchmarks import evaluate
 from backend.compiler import compile_program
+from backend.measurement_lock import measurement_lock
 from backend.model import load_model
 from backend.pairing import matching_count, minimum_matching, ranked_matchings
 from backend.runner import run_program
+from backend.scheduler import HarpPolicy, PortPolicy, RandomPolicy
 from backend.stats import mae, rmse, spearman
 
 
@@ -94,7 +96,8 @@ def process_job(job_id, repetitions=config.EVAL_REPETITIONS):
     job = store.job
 
     try:
-        _run(store, job, repetitions)
+        with measurement_lock(f"job {job_id}"):
+            _run(store, job, repetitions)
     except Exception as exc:
         store.save(
             status="failed",
@@ -159,6 +162,7 @@ def _run(store, job, repetitions):
     store.save(topology=topo, profilingMode=mode, counters=profiler.counter_status())
 
     _stage(store, 4, f"Static analysis and runtime profiling ({mode} mode)")
+    profiler.warm_up(slots[0])
     characterized = {}
 
     for task_id in task_ids:
@@ -203,8 +207,14 @@ def _run(store, job, repetitions):
         t: characterized[t]["profile"]["solo"]["median"] for t in task_ids
     }
     seed = secrets.randbits(31)
+    profiler.warm_up(slots[0])
+    policies = {
+        "harp": HarpPolicy(characterized, model),
+        "port": PortPolicy(characterized),
+        "random": RandomPolicy(seed + 1),
+    }
     evaluation = evaluate(
-        tasks, solo, {"harp": harp_pairs, "port": port_pairs},
+        tasks, solo, policies, {"harp_static": harp_pairs},
         slots, repetitions, seed,
     )
     accuracy = prediction_accuracy(pair_rows, evaluation["pairObservations"])

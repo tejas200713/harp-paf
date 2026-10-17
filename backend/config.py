@@ -22,7 +22,8 @@ ARTIFACTS_DIR = BASE_DIR / "artifacts"
 EXAMPLES_DIR = BASE_DIR / "examples"
 KERNELS_SOURCE = Path(__file__).resolve().parent / "kernels" / "stressors.cpp"
 KERNELS_BUILD_DIR = ARTIFACTS_DIR / "kernels"
-MODEL_FILE = ARTIFACTS_DIR / "model" / "coefficients.json"
+MODEL_DIR = ARTIFACTS_DIR / "model"   # coefficients-<mode>.json per profiling mode
+MEASUREMENT_LOCK = ARTIFACTS_DIR / ".measurement.lock"
 
 WINDOWS = os.name == "nt"
 
@@ -51,6 +52,13 @@ OBJECTIVE = "makespan"
 
 # Solo timing and evaluation.
 SOLO_REPETITIONS = 3
+# Unmeasured runs before solo timing: the first launches of a freshly
+# compiled binary are slowed by on-access antivirus scanning and cold caches.
+WARMUP_RUNS = 1
+# Seconds of full load on the SMT core before calibration, profiling and
+# evaluation, so laptop CPUs leave low-power states and reach a steady
+# clock before anything is timed.
+WARMUP_SECONDS = float(os.environ.get("HARP_WARMUP_SECONDS", "10"))
 EVAL_REPETITIONS = 5
 MIN_EVAL_REPETITIONS = 3
 MAX_EVAL_REPETITIONS = 15

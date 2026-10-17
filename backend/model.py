@@ -126,11 +126,15 @@ def default_model():
     }
 
 
+def model_file(mode):
+    return config.MODEL_DIR / f"coefficients-{mode}.json"
+
+
 def load_model(mode, platform=None, cpu_model=None):
     """Calibrated model for this mode and machine, else heuristic defaults."""
 
     try:
-        model = json.loads(config.MODEL_FILE.read_text(encoding="utf-8"))
+        model = json.loads(model_file(mode).read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return default_model()
 
@@ -153,8 +157,10 @@ def load_model(mode, platform=None, cpu_model=None):
 
 
 def save_model(model):
-    config.MODEL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    config.MODEL_FILE.write_text(json.dumps(model, indent=2), encoding="utf-8")
+    path = model_file(model["profilingMode"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(model, indent=2), encoding="utf-8")
+    return path
 
 
 def pair_duration(solo_i, solo_j, slowdown):
@@ -168,13 +174,11 @@ def pair_duration(solo_i, solo_j, slowdown):
     return max(solo_i, solo_j) + min(solo_i, solo_j) * slowdown
 
 
-def pair_cost(z, model, confidence_i, confidence_j, solo_i, solo_j):
-    """Equation 11 for the makespan objective, in seconds.
+def slowdown_risk(z, model, confidence_i, confidence_j):
+    """Predicted slowdown plus the Equation 11 risk and uncertainty terms.
 
-    J = D + overlap * [mu * max(0, d_worst - tau) + nu * sigma],
-    where overlap = min(T_i, T_j) is the co-running time the risk terms
-    apply to. Summed over a matching on one SMT core, D is the predicted
-    makespan.
+    Dimensionless; used directly by the dynamic scheduler to rank
+    co-runners, and scaled by the overlap time in pair_cost.
     """
 
     raw = raw_prediction(z, model["coefficients"])
@@ -182,9 +186,7 @@ def pair_cost(z, model, confidence_i, confidence_j, solo_i, solo_j):
     worst = max(predicted, raw_prediction(z, model["worstCoefficients"]))
     error = model.get("heldOutRmse") or config.DEFAULT_RMSE
     sigma = error * (1.5 - 0.5 * (confidence_i + confidence_j))
-    overlap = min(solo_i, solo_j)
-    duration = pair_duration(solo_i, solo_j, predicted)
-    cost = duration + overlap * (
+    risk = (
         config.RISK_MU * max(0.0, worst - config.RISK_TAU)
         + config.RISK_NU * sigma
     )
@@ -194,7 +196,29 @@ def pair_cost(z, model, confidence_i, confidence_j, solo_i, solo_j):
         "unclampedPrediction": raw,
         "predictedWorstSlowdown": worst,
         "uncertainty": sigma,
+        "score": predicted + risk,
+        "risk": risk,
+    }
+
+
+def pair_cost(z, model, confidence_i, confidence_j, solo_i, solo_j):
+    """Equation 11 for the makespan objective, in seconds.
+
+    J = D + overlap * [mu * max(0, d_worst - tau) + nu * sigma],
+    where overlap = min(T_i, T_j) is the co-running time the risk terms
+    apply to. Summed over a matching on one SMT core, D is the predicted
+    makespan.
+    """
+
+    estimate = slowdown_risk(z, model, confidence_i, confidence_j)
+    overlap = min(solo_i, solo_j)
+    duration = pair_duration(solo_i, solo_j, estimate["predictedSlowdown"])
+    risk = estimate.pop("risk")
+    estimate.pop("score")
+
+    return {
+        **estimate,
         "predictedPairSeconds": duration,
         "soloSeconds": [solo_i, solo_j],
-        "finalPairCost": cost,
+        "finalPairCost": duration + overlap * risk,
     }

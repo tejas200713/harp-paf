@@ -67,9 +67,15 @@ python -m backend.calibrate --repetitions 3
 Profiles the ten training kernels in `backend/kernels/stressors.cpp`,
 co-runs all 55 kernel pairs on one SMT core, fits the regression
 coefficients and reports leave-one-workload-out error. Output:
-`artifacts/model/coefficients.json`. A model is used only on the platform,
-CPU model and profiling mode it was fitted with; otherwise jobs fall back
-to documented defaults labelled `heuristic-defaults`.
+`artifacts/model/coefficients-<mode>.json`, one file per profiling mode. A
+model is used only on the platform, CPU model and profiling mode it was
+fitted with; otherwise jobs fall back to documented defaults labelled
+`heuristic-defaults`.
+
+Calibration, experiments and server jobs take a machine-wide measurement
+lock (`artifacts/.measurement.lock`), so two measurements can never share
+the SMT core; a second one fails immediately with "Another measurement is
+running". Keep other heavy programs closed while measuring.
 
 ## Run
 
@@ -109,10 +115,18 @@ approved but run for milliseconds, too short for meaningful measurement.
 To add a workload: put the source in `examples/` and add its expected
 output to `manifest.json`.
 
+## Scheduling
+
+HARP-PAF schedules dynamically (`scheduler.py`): whenever a hardware thread
+frees up, the remaining workload with the lowest predicted slowdown and
+risk next to the sibling's *remaining* phases starts on it, so no thread
+idles while work remains. PORT and Random use the same executor with their
+own choice rules. The global minimum-cost matching is still computed and
+evaluated as "HARP-PAF (static pairs)", where a thread idles once the
+shorter task of a pair finishes.
+
 ## Limitations
 
-* With fixed pairs, a hardware thread idles once the shorter task of a
-  pair finishes; the OS-default baseline never idles a thread.
 * Phase alignment assumes co-running workloads progress proportionally.
 * Probe mode yields one whole-program phase per workload.
 * EMON multiplexes two counter groups; group-only totals (cache, branch)

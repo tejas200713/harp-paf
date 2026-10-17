@@ -53,115 +53,6 @@ def _child_setup(cpus):
     return setup
 
 
-def _reap(key, process, launched, results):
-    pid, status, usage = os.wait4(process.pid, os.WNOHANG)
-
-    if pid == 0:
-        return False
-
-    ended = time.perf_counter()
-    process.returncode = os.waitstatus_to_exitcode(status)
-    results[key] = {
-        "wallSeconds": ended - launched[key],
-        "endTime": ended,
-        "userSeconds": usage.ru_utime,
-        "systemSeconds": usage.ru_stime,
-        "exitCode": process.returncode,
-    }
-    return True
-
-
-def _wait_foreground(processes, pending, launched, results, deadline):
-    """Reap foreground processes; return True on timeout."""
-
-    pidfds = {}
-
-    if hasattr(os, "pidfd_open"):
-        for key in pending:
-            try:
-                pidfds[os.pidfd_open(processes[key].pid)] = key
-            except OSError:
-                pidfds = {}
-                break
-
-    try:
-        while pending:
-            remaining = deadline - time.perf_counter()
-
-            if remaining <= 0:
-                return True
-
-            if pidfds:
-                ready, _, _ = select.select(
-                    list(pidfds), [], [], remaining
-                )
-                for fd in ready:
-                    key = pidfds[fd]
-                    if _reap(key, processes[key], launched, results):
-                        pending.discard(key)
-                        del pidfds[fd]
-                        os.close(fd)
-            else:
-                time.sleep(0.0005)
-                for key in list(pending):
-                    if _reap(key, processes[key], launched, results):
-                        pending.discard(key)
-
-        return False
-
-    finally:
-        for fd in pidfds:
-            os.close(fd)
-
-
-def _kill(process):
-    if process.returncode is not None:
-        return
-
-    try:
-        os.killpg(process.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-
-    try:
-        os.waitpid(process.pid, 0)
-    except ChildProcessError:
-        pass
-
-    process.returncode = -signal.SIGKILL
-
-
-def _wait_foreground_windows(processes, pending, launched, results, deadline):
-    """Windows equivalent of _wait_foreground; return True on timeout."""
-
-    while pending:
-        remaining = deadline - time.perf_counter()
-
-        if remaining <= 0:
-            return True
-
-        keys = sorted(pending)
-        index = platform_win.wait_any([processes[k] for k in keys], remaining)
-
-        if index is None:
-            return True
-
-        ended = time.perf_counter()
-        key = keys[index]
-        process = processes[key]
-        process.wait()
-        user, system = platform_win.process_times(process)
-        results[key] = {
-            "wallSeconds": ended - launched[key],
-            "endTime": ended,
-            "userSeconds": user,
-            "systemSeconds": system,
-            "exitCode": process.returncode,
-        }
-        pending.discard(key)
-
-    return False
-
 
 def _start(spec, stdout_file, stderr_file, cwd):
     argv = [str(arg) for arg in spec.argv]
@@ -184,59 +75,188 @@ def _start(spec, stdout_file, stderr_file, cwd):
     )
 
 
+def _kill(process):
+    if WINDOWS:
+        platform_win.kill(process)
+        return
+
+    if process.returncode is not None:
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+    try:
+        os.waitpid(process.pid, 0)
+    except ChildProcessError:
+        pass
+
+    process.returncode = -signal.SIGKILL
+
+
 def _read(stream):
     stream.seek(0)
     data = stream.read(config.MAX_OUTPUT_BYTES + 1)
     return data[:config.MAX_OUTPUT_BYTES].decode("utf-8", errors="replace")
 
 
+class ProcessGroup:
+    """Processes started one by one; wait_any() reports the next to finish.
+
+    Used directly by the dynamic SMT scheduler and, through run_group, for
+    fixed groups. Results carry wall time from each process's own launch,
+    CPU time, exit code, and (after close) its captured output.
+    """
+
+    def __init__(self, cwd=None):
+        self.cwd = cwd
+        self.started = time.perf_counter()
+        self.specs = {}
+        self.processes = {}
+        self.streams = {}
+        self.launched = {}
+        self.results = {}
+        self.pending = set()
+        self._pidfds = {}
+
+    def start(self, spec):
+        stdout_file = tempfile.TemporaryFile()
+        stderr_file = tempfile.TemporaryFile()
+        self.specs[spec.key] = spec
+        self.streams[spec.key] = (stdout_file, stderr_file)
+        self.launched[spec.key] = time.perf_counter()
+        process = _start(spec, stdout_file, stderr_file, self.cwd)
+        self.processes[spec.key] = process
+
+        if not spec.background:
+            self.pending.add(spec.key)
+            if not WINDOWS and hasattr(os, "pidfd_open"):
+                try:
+                    self._pidfds[os.pidfd_open(process.pid)] = spec.key
+                except OSError:
+                    pass
+
+        return self.launched[spec.key]
+
+    def _record(self, key, ended, user, system):
+        self.results[key] = {
+            "wallSeconds": ended - self.launched[key],
+            "startTime": self.launched[key] - self.started,
+            "endTime": ended - self.started,
+            "userSeconds": user,
+            "systemSeconds": system,
+            "exitCode": self.processes[key].returncode,
+        }
+        self.pending.discard(key)
+
+    def _reap_linux(self, key):
+        process = self.processes[key]
+        pid, status, usage = os.wait4(process.pid, os.WNOHANG)
+
+        if pid == 0:
+            return False
+
+        process.returncode = os.waitstatus_to_exitcode(status)
+        self._record(key, time.perf_counter(), usage.ru_utime, usage.ru_stime)
+        return True
+
+    def wait_any(self, deadline):
+        """Key of the next foreground process to finish, or None on timeout."""
+
+        while self.pending:
+            remaining = deadline - time.perf_counter()
+
+            if remaining <= 0:
+                return None
+
+            if WINDOWS:
+                keys = sorted(self.pending)
+                index = platform_win.wait_any(
+                    [self.processes[k] for k in keys], remaining
+                )
+                if index is None:
+                    return None
+                ended = time.perf_counter()
+                key = keys[index]
+                self.processes[key].wait()
+                user, system = platform_win.process_times(self.processes[key])
+                self._record(key, ended, user, system)
+                return key
+
+            fds = {fd: k for fd, k in self._pidfds.items() if k in self.pending}
+
+            if fds and len(fds) == len(self.pending):
+                ready, _, _ = select.select(list(fds), [], [], remaining)
+                for fd in ready:
+                    key = fds[fd]
+                    if self._reap_linux(key):
+                        os.close(fd)
+                        del self._pidfds[fd]
+                        return key
+            else:
+                time.sleep(0.0005)
+                for key in sorted(self.pending):
+                    if self._reap_linux(key):
+                        return key
+
+        return None
+
+    def close(self):
+        """Kill what is still running and collect outputs; return results."""
+
+        for process in self.processes.values():
+            _kill(process)
+
+        for fd in self._pidfds:
+            os.close(fd)
+        self._pidfds = {}
+
+        for key, spec in self.specs.items():
+            stdout_file, stderr_file = self.streams[key]
+            entry = self.results.setdefault(key, {"exitCode": None})
+            entry["stdout"] = _read(stdout_file).strip()
+            entry["stderr"] = _read(stderr_file).strip()
+            entry["cpus"] = list(spec.cpus)
+            entry["background"] = spec.background
+            stdout_file.close()
+            stderr_file.close()
+
+        return self.results
+
+
 def run_group(specs, timeout=None, cwd=None):
     """Run processes concurrently; return per-key results and makespan."""
 
     timeout = timeout or config.RUN_TIMEOUT_SECONDS
-    processes = {}
-    streams = {}
-    launched = {}
-    results = {}
+    group = ProcessGroup(cwd)
     timed_out = False
-    started = time.perf_counter()
 
     try:
         for spec in specs:
-            stdout_file = tempfile.TemporaryFile()
-            stderr_file = tempfile.TemporaryFile()
-            streams[spec.key] = (stdout_file, stderr_file)
-            launched[spec.key] = time.perf_counter()
-            processes[spec.key] = _start(spec, stdout_file, stderr_file, cwd)
+            group.start(spec)
 
-        pending = {spec.key for spec in specs if not spec.background}
-        wait = _wait_foreground_windows if WINDOWS else _wait_foreground
-        timed_out = wait(processes, pending, launched, results, started + timeout)
+        deadline = group.started + timeout
+
+        while group.pending:
+            if group.wait_any(deadline) is None:
+                timed_out = True
+                break
 
     finally:
-        for process in processes.values():
-            if WINDOWS:
-                platform_win.kill(process)
-            else:
-                _kill(process)
+        results = group.close()
 
     foreground = [s.key for s in specs if not s.background]
     makespan = (
-        max(results[k]["endTime"] for k in foreground) - started
+        max(results[k]["endTime"] for k in foreground)
         if foreground and not timed_out
         else None
     )
 
-    for spec in specs:
-        stdout_file, stderr_file = streams[spec.key]
-        entry = results.setdefault(spec.key, {"exitCode": None})
-        entry["stdout"] = _read(stdout_file).strip()
-        entry["stderr"] = _read(stderr_file).strip()
-        entry["cpus"] = list(spec.cpus)
-        entry["background"] = spec.background
+    for entry in results.values():
+        entry.pop("startTime", None)
         entry.pop("endTime", None)
-        stdout_file.close()
-        stderr_file.close()
 
     return {
         "makespanSeconds": makespan,

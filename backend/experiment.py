@@ -65,19 +65,27 @@ def report(job):
 
     print(f"\nHARP-PAF pairs: {job['selectedPairs']}  (predicted {job['minimumCost']:.3f} s)")
     print(f"PORT pairs:     {job['portPairs']}")
-    print(f"Serial (each workload alone, one after another): "
+    print(f"Serial (each workload alone, one after another; measured median): "
           f"{evaluation['serialSoloSeconds']:.3f} s\n")
-    print(f"{'method':14s} {'makespan (median, 95% CI)':32s} {'vs serial':>10s} {'ANTT':>6s}")
+    print(f"{'method':24s} {'makespan (median, 95% CI)':30s} {'vs serial':>9s} {'ANTT':>6s}")
 
     for method, summary in evaluation["methods"].items():
         makespan = summary["makespan"]
-        print(f"{summary['label']:14s} {makespan['median']:7.3f} s "
+        print(f"{summary['label']:24s} {makespan['median']:7.3f} s "
               f"[{makespan['ci95'][0]:.3f}, {makespan['ci95'][1]:.3f}]"
-              f"{summary['smtGainVsSerialPercent']:+15.1f}% {summary['antt']['median']:6.2f}")
+              f"{summary['smtGainVsSerialPercent']:+12.1f}% {summary['antt']['median']:6.2f}")
+
+    harp_timeline = evaluation["runs"]["harp"][0]["timeline"]
+    print("\nHARP-PAF schedule (first repetition):")
+    for item in harp_timeline:
+        partner = item["startedWith"] or "-"
+        print(f"  cpu {item['cpu']}: {item['task']} {item['start']:6.3f}-{item['end']:6.3f} s"
+              f"  started next to {partner}"
+              f"  (predicted slowdown {item['predictedSlowdown']:.2f})")
 
     print()
     for method, comparison in evaluation["comparisons"].items():
-        print(f"HARP-PAF vs {comparison['label']:13s} speedup {comparison['speedup']:.3f}x "
+        print(f"HARP-PAF vs {comparison['label']:24s} speedup {comparison['speedup']:.3f}x "
               f"(95% CI {comparison['speedupCi95'][0]:.3f}-{comparison['speedupCi95'][1]:.3f}), "
               f"faster in {comparison['harpFasterInRuns']}/{evaluation['repetitions']} runs")
 

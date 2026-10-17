@@ -240,7 +240,7 @@ def get_job_results(job_id: str):
         )
 
     methods = evaluation["methods"]
-    order = ["random", "harp", "port", "linux"]
+    order = ["random", "harp", "harp_static", "port", "linux"]
 
     return {
         "jobId": job_id,
@@ -283,7 +283,13 @@ def get_job_results(job_id: str):
         "matchingsEvaluated": job.get("matchingsEvaluated"),
         "selectedPairs": job.get("selectedPairs", []),
         "portPairs": job.get("portPairs", []),
-        "randomPairsByRun": [r["pairs"] for r in evaluation["runs"]["random"]],
+        # Execution timeline of each method's first repetition:
+        # [{task, cpu, start, end, startedWith, predictedSlowdown}].
+        "timelines": {
+            m: runs[0].get("timeline") for m, runs in evaluation["runs"].items()
+        },
+        "objective": benchmark.get("objective"),
+        "serialSoloSeconds": benchmark.get("serialSoloSeconds"),
         "tasks": _task_rows(job),
         "outputByTask": job.get("executionResults", []),
         "prediction": job.get("predictionAccuracy"),

@@ -59,6 +59,27 @@ def align(fused_i, fused_j):
     return [(pi / total, a, b) for pi, a, b in intervals]
 
 
+def remaining(fused, progress):
+    """The part of a workload still to run, from `progress` (0..1) to the end.
+
+    Segments are cut at `progress` and rescaled to [0, 1], so a task that is
+    already in its last phase is compared only on that phase.
+    """
+
+    progress = max(0.0, min(progress, 0.999))
+    span = 1.0 - progress
+    segments = [
+        {
+            "start": (max(s["start"], progress) - progress) / span,
+            "end": (s["end"] - progress) / span,
+            "phase": s["phase"],
+        }
+        for s in fused["segments"]
+        if s["end"] > progress
+    ]
+    return {**fused, "segments": segments or fused["segments"][-1:]}
+
+
 def _cosine(a, b):
     dot = sum(x * y for x, y in zip(a, b))
     norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))

@@ -4,11 +4,13 @@
 
 The training set is the stressor kernels in kernels/stressors.cpp, never
 the example workloads, so the model is evaluated on workloads it has not
-seen. For every unordered kernel pair (including a kernel with itself) the
-two kernels are co-run on the two SMT siblings of one physical core; the
-median per-task co-run times and the solo times give the measured mean and
-worst excess slowdown. Coefficients are fitted by non-negative least
-squares and checked with leave-one-workload-out validation.
+seen. The SMT core is first warmed up to a steady clock. For every
+unordered kernel pair (including a kernel with itself) the two kernels are
+co-run on the two SMT siblings of one physical core, and each repetition
+also times both kernels alone right next to the co-run (shuffled order),
+so clock drift cancels out; the median per-task ratios give the measured
+mean and worst excess slowdown. Coefficients are fitted by non-negative
+least squares and checked with leave-one-workload-out validation.
 
 The model is saved to artifacts/model/coefficients.json together with the
 profiling mode it was fitted in; jobs only use it in the same mode.
@@ -17,32 +19,60 @@ profiling mode it was fitted in; jobs only use it in the same mode.
 import argparse
 from datetime import datetime, timezone
 from itertools import combinations_with_replacement
+import random
 import statistics
 
 from backend import config, kernels, profiler, topology
 from backend.analysis import characterize
 from backend.execution import ProcessSpec, run_group
 from backend.features import pair_features
+from backend.measurement_lock import measurement_lock
 from backend.model import fit, save_model
 
 
-def co_run(argv_a, argv_b, slot, repetitions):
-    times_a, times_b = [], []
+def _timed(specs):
+    run = run_group(specs)
+
+    if run["timedOut"]:
+        raise RuntimeError("Calibration run timed out")
+
+    for key, entry in run["processes"].items():
+        if entry["exitCode"] != 0:
+            raise RuntimeError(f"Kernel failed: {entry['stderr']}")
+
+    return {key: entry["wallSeconds"] for key, entry in run["processes"].items()}
+
+
+def co_run(argv_a, argv_b, slot, repetitions, rng):
+    """Median per-task slowdown of a co-run against adjacent solo runs.
+
+    Every repetition times solo a, solo b and the co-run back to back in a
+    shuffled order, so slow drift in clock speed cancels out of the ratio.
+    """
+
+    ratios_a, ratios_b = [], []
 
     for _ in range(repetitions):
-        run = run_group([
-            ProcessSpec("a", argv_a, (slot[0],)),
-            ProcessSpec("b", argv_b, (slot[1],)),
-        ])
-        if run["timedOut"]:
-            raise RuntimeError("Calibration co-run timed out")
-        for key in ("a", "b"):
-            if run["processes"][key]["exitCode"] != 0:
-                raise RuntimeError(f"Kernel failed: {run['processes'][key]['stderr']}")
-        times_a.append(run["processes"]["a"]["wallSeconds"])
-        times_b.append(run["processes"]["b"]["wallSeconds"])
+        steps = ["solo_a", "solo_b", "co"]
+        rng.shuffle(steps)
+        times = {}
 
-    return statistics.median(times_a), statistics.median(times_b)
+        for step in steps:
+            if step == "solo_a":
+                times["solo_a"] = _timed([ProcessSpec("a", argv_a, (slot[0],))])["a"]
+            elif step == "solo_b":
+                times["solo_b"] = _timed([ProcessSpec("b", argv_b, (slot[0],))])["b"]
+            else:
+                co = _timed([
+                    ProcessSpec("a", argv_a, (slot[0],)),
+                    ProcessSpec("b", argv_b, (slot[1],)),
+                ])
+                times["co_a"], times["co_b"] = co["a"], co["b"]
+
+        ratios_a.append(times["co_a"] / times["solo_a"] - 1)
+        ratios_b.append(times["co_b"] / times["solo_b"] - 1)
+
+    return statistics.median(ratios_a), statistics.median(ratios_b)
 
 
 def calibrate(names, repetitions):
@@ -56,7 +86,10 @@ def calibrate(names, repetitions):
     argvs = {n: kernels.argv(n, kernels.TRAINING_UNITS[n]) for n in names}
     characterized = {}
 
-    print(f"Profiling mode: {mode}; CPU pair {slot}", flush=True)
+    print(f"Profiling mode: {mode}; CPU pair {slot}; warming up "
+          f"{config.WARMUP_SECONDS:.0f} s", flush=True)
+    profiler.warm_up(slot)
+    rng = random.Random(0)
 
     for name in names:
         characterized[name] = characterize(
@@ -68,9 +101,7 @@ def calibrate(names, repetitions):
     samples = []
 
     for a, b in combinations_with_replacement(names, 2):
-        time_a, time_b = co_run(argvs[a], argvs[b], slot, repetitions)
-        slow_a = time_a / characterized[a]["profile"]["solo"]["median"] - 1
-        slow_b = time_b / characterized[b]["profile"]["solo"]["median"] - 1
+        slow_a, slow_b = co_run(argvs[a], argvs[b], slot, repetitions, rng)
         sample = {
             "pair": [a, b],
             "z": pair_features(characterized[a]["fused"], characterized[b]["fused"]),
@@ -93,7 +124,7 @@ def calibrate(names, repetitions):
         "cpuPair": list(slot),
         "samples": samples,
     })
-    save_model(model)
+    model["savedTo"] = str(save_model(model))
     return model
 
 
@@ -108,7 +139,8 @@ def main():
     if unknown:
         raise SystemExit(f"Unknown kernels: {', '.join(sorted(unknown))}")
 
-    model = calibrate(names, args.repetitions)
+    with measurement_lock("calibration"):
+        model = calibrate(names, args.repetitions)
 
     print("\n=== CALIBRATED MODEL ===")
     for key, value in model["coefficients"].items():
@@ -117,7 +149,7 @@ def main():
     if model["heldOutMae"] is not None:
         print(f"  held-out MAE (LOWO) {model['heldOutMae']:.4f} "
               f"over {model['heldOutCount']} pairs")
-    print(f"Saved to {config.MODEL_FILE}")
+    print(f"Saved to {model['savedTo']}")
 
 
 if __name__ == "__main__":

@@ -8,7 +8,8 @@ import random
 
 from backend import config, emon
 from backend.baselines import port_matching, random_matching
-from backend.features import align, pair_features
+from backend.features import align, pair_features, remaining
+from backend.scheduler import HarpPolicy, PortPolicy
 from backend.fusion import FEATURES, fuse, static_only
 from backend.model import default_model, fit, nnls, pair_cost, pair_duration
 from backend.pairing import (
@@ -202,6 +203,55 @@ def test_pair_features_follow_phase_alignment():
     assert abs(z["K"] - 0.5 * 0.8) < 1e-12
 
 
+def test_remaining_cuts_phase_timeline_at_progress():
+    fused = {"segments": [
+        {"start": 0.0, "end": 0.5, "phase": 0},
+        {"start": 0.5, "end": 1.0, "phase": 1},
+    ]}
+    rest = remaining(fused, 0.75)
+    assert rest["segments"] == [{"start": 0.0, "end": 1.0, "phase": 1}]
+    rest = remaining(fused, 0.25)
+    assert [round(s["end"], 6) for s in rest["segments"]] == [round(1 / 3, 6), 1.0]
+
+
+def _policy_inputs():
+    compute = {k: 0.0 for k in FEATURES} | {"u_int_alu": 0.9, "stall_be_core": 0.9}
+    memory = {k: 0.0 for k in FEATURES} | {"bandwidth": 0.9, "footprint": 0.9,
+                                           "stall_be_mem": 0.9}
+
+    def task(features, solo, fp_share):
+        return {
+            "fused": {"phases": [{"id": 0, "fused": features}],
+                      "segments": [{"start": 0.0, "end": 1.0, "phase": 0}],
+                      "meanConfidence": 0.5},
+            "profile": {"solo": {"median": solo}},
+            "static": _static(fp_simd=fp_share, int_alu=1 - fp_share),
+        }
+
+    return {
+        "MEM1": task(memory, 1.0, 0.0),
+        "MEM2": task(memory, 1.2, 0.0),
+        "CPU1": task(compute, 0.8, 0.9),
+    }
+
+
+def test_harp_policy_avoids_memory_co_runner_for_memory_task():
+    characterized = _policy_inputs()
+    policy = HarpPolicy(characterized, default_model())
+
+    assert policy.start(["MEM1", "MEM2", "CPU1"]) == "MEM2"   # longest first
+    choice, slowdown = policy.choose("MEM2", 0.0, ["MEM1", "CPU1"])
+    assert choice == "CPU1"
+    assert slowdown >= 0
+
+
+def test_port_policy_pairs_intensive_with_light():
+    policy = PortPolicy(_policy_inputs())
+
+    assert policy.start(["MEM1", "MEM2", "CPU1"]) == "CPU1"   # most port-intensive
+    assert policy.choose("CPU1", 0.0, ["MEM1", "MEM2"])[0] == "MEM2"
+
+
 def test_classify_att_syntax():
     assert classify("movq", "$0x0,-0x8(%rbp)") == ("load_store", True)
     assert classify("mov", "%rax,%rbx") == ("int_alu", False)
@@ -263,6 +313,21 @@ def test_emon_parse_reads_one_cpu_column_and_pairs_groups():
     assert abs(sum(m[f"mix_{r}"] for r in config.RESOURCES) - 1) < 1e-12
     assert abs(m["mix_load_store"] - 0.3) < 1e-12
     assert totals["instructions"] == 400_000_000
+
+
+def test_measurement_lock_blocks_a_second_measurement(tmp_path, monkeypatch):
+    import pytest
+    from backend.measurement_lock import MeasurementBusy, measurement_lock
+
+    monkeypatch.setattr(config, "MEASUREMENT_LOCK", tmp_path / "lock")
+
+    with measurement_lock("first"):
+        with pytest.raises(MeasurementBusy, match="first"):
+            with measurement_lock("second"):
+                pass
+
+    with measurement_lock("third"):
+        pass
 
 
 def test_stats_helpers():
