@@ -20,8 +20,14 @@ Policies
 Ties are broken by longer solo time, then task ID.
 """
 
+from pathlib import Path
 import random
+import sys
 import time
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.baselines import port_pressure
 from backend.execution import ProcessGroup, ProcessSpec
@@ -157,7 +163,7 @@ def run_dynamic(tasks, solo, slots, policy, timeout):
             raise RuntimeError(f"{task}: exit={entry.get('exitCode')}; "
                                f"stderr={entry.get('stderr', '')[:300]!r}")
         expected = tasks[task]["expected"]
-        if expected is not None and entry["stdout"].strip() != expected.strip():
+        if expected is not None and entry.get("stdout", "").strip() != expected.strip():
             raise RuntimeError(f"{task}: output verification failed")
 
     timeline = sorted(
@@ -176,7 +182,7 @@ def run_dynamic(tasks, solo, slots, policy, timeout):
     )
 
     return {
-        "makespanSeconds": max(item["end"] for item in timeline),
+        "makespanSeconds": max((item["end"] for item in timeline), default=0.0),
         "taskSeconds": {t: e["wallSeconds"] for t, e in results.items()},
         "timeline": timeline,
         "decisionSeconds": decision_seconds,

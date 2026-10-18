@@ -10,8 +10,14 @@ Stages (stageIndex):
 from datetime import datetime, timezone
 import json
 import os
+from pathlib import Path
 import secrets
+import sys
 import time
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from backend import config, profiler, topology
 from backend.analysis import characterize, pair_table
@@ -139,10 +145,11 @@ def _run(store, job, repetitions):
     execution = []
 
     for f in files:
-        result = run_program(binaries[f["taskId"]], expected[f["taskId"]],
+        tid = f["taskId"]
+        result = run_program(binaries[tid], expected[tid],
                              timeout=config.RUN_TIMEOUT_SECONDS)
         execution.append({
-            "taskId": f["taskId"], "filename": f["originalName"],
+            "taskId": tid, "filename": f["originalName"],
             **{k: result.get(k) for k in (
                 "success", "verified", "executionTime", "exitCode",
                 "stdout", "stderr", "timedOut", "error")},

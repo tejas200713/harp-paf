@@ -1,5 +1,4 @@
-
-"""Safe, limited C++ source splitter for HARP-PAF."""
+"""C++ source splitter for HARP-PAF."""
 
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,78 +19,61 @@ class SplitResult:
 CPP_LANGUAGE = Language(tree_sitter_cpp.language())
 parser = Parser(CPP_LANGUAGE)
 
-ALLOWED_RETURNS = {"int", "void", "double", "float", "long", "bool"}
-ALLOWED_TYPES = ALLOWED_RETURNS | {"char", "short", "unsigned"}
-
 
 def _text(source: bytes, node) -> str:
     return source[node.start_byte:node.end_byte].decode("utf-8")
 
 
+def _function_name(source: bytes, node) -> str:
+    declarator = node.child_by_field_name("declarator")
+    if declarator is None:
+        return ""
+    curr = declarator
+    while curr:
+        if curr.type in ("identifier", "field_identifier", "qualified_identifier", "destructor_name"):
+            return _text(source, curr)
+        next_curr = curr.child_by_field_name("declarator")
+        if next_curr:
+            curr = next_curr
+        else:
+            found = False
+            for child in curr.named_children:
+                if child.type in (
+                    "identifier", "field_identifier", "qualified_identifier",
+                    "function_declarator", "pointer_declarator", "reference_declarator"
+                ):
+                    curr = child
+                    found = True
+                    break
+            if not found:
+                break
+    return ""
+
+
 def _function_info(source: bytes, node):
-    """Extract a simple top-level function definition."""
+    """Extract a top-level function definition."""
     body = node.child_by_field_name("body")
     declarator = node.child_by_field_name("declarator")
-    return_type = node.child_by_field_name("type")
 
-    if body is None or declarator is None or return_type is None:
+    if body is None or declarator is None:
         raise ValueError("Unsupported C++ function declaration")
 
-    if declarator.type != "function_declarator":
-        raise ValueError("Only ordinary functions are supported")
+    name = _function_name(source, node)
+    if not name:
+        raise ValueError("Could not determine function name")
 
-    name_node = declarator.child_by_field_name("declarator")
-    if name_node is None or name_node.type != "identifier":
-        raise ValueError("Unsupported function name")
+    raw_decl = source[node.start_byte:body.start_byte].decode("utf-8").strip() + ";"
+    # If function had static storage class, strip static for the shared header forward declaration
+    declaration = re.sub(r'^\s*static\s+', '', raw_decl)
 
-    name = _text(source, name_node)
-    if not re.fullmatch(r"[A-Za-z_]\w*", name):
-        raise ValueError("Invalid function name")
-
-    if _text(source, return_type) not in ALLOWED_RETURNS:
-        raise ValueError(f"Unsupported return type in {name}")
-
-    params = declarator.child_by_field_name("parameters")
-    if params is None:
-        raise ValueError(f"Unsupported parameters in {name}")
-
-    for child in params.named_children:
-        if child.type == "variadic_parameter":
-            raise ValueError(f"Variadic function not supported: {name}")
-        if child.type != "parameter_declaration":
-            raise ValueError(f"Unsupported parameter in {name}")
-
-        param_type = child.child_by_field_name("type")
-        param_name = child.child_by_field_name("declarator")
-
-        if (
-            param_type is None
-            or _text(source, param_type) not in ALLOWED_TYPES
-            or (
-                param_name is not None
-                and param_name.type != "identifier"
-            )
-        ):
-            raise ValueError(f"Complex parameter in {name}")
-
-    # Reject extra specifiers such as static, inline and templates.
-    prefix = source[node.start_byte:return_type.start_byte].decode("utf-8")
-    if prefix.strip():
-        raise ValueError(f"Unsupported function specifier in {name}")
-
-    definition = _text(source, node)
-    declaration = source[
-        node.start_byte:body.start_byte
-    ].decode("utf-8").strip() + ";"
-
-    if "=" in declaration or "..." in declaration:
-        raise ValueError(f"Unsupported declaration in {name}")
+    raw_def = _text(source, node)
+    definition = re.sub(r'^\s*static\s+', '', raw_def)
 
     return name, declaration, definition
 
 
 def split_source(source_path: Path, output_dir: Path) -> SplitResult:
-    """Split supported C++ functions into separate translation units."""
+    """Split C++ functions into separate translation units."""
     source_path = Path(source_path)
     output_dir = Path(output_dir)
 
@@ -99,8 +81,8 @@ def split_source(source_path: Path, output_dir: Path) -> SplitResult:
         raise ValueError("Only .cpp files are supported")
 
     raw = source_path.read_bytes()
-    if not raw or len(raw) > 100 * 1024:
-        raise ValueError("Source must be between 1 byte and 100 KB")
+    if not raw or len(raw) > 500 * 1024:
+        raise ValueError("Source must be between 1 byte and 500 KB")
 
     try:
         raw.decode("utf-8")
@@ -110,35 +92,45 @@ def split_source(source_path: Path, output_dir: Path) -> SplitResult:
     tree = parser.parse(raw)
 
     if tree.root_node.has_error:
-        raise ValueError("C++ syntax parsing failed")
+        raise ValueError("C++ syntax parsing failed. Please check for syntax errors.")
 
-    includes = []
+    shared_preamble = []
     functions = []
-    names = set()
+    seen_names = set()
 
     for node in tree.root_node.named_children:
-        if node.type == "preproc_include":
-            directive = _text(raw, node).strip()
-            if not re.fullmatch(
-                r'#\s*include\s*<[\w./+-]+>', directive
-            ):
-                raise ValueError("Only standard header includes are supported")
-            includes.append(directive)
+        if node.type in (
+            "struct_specifier", "class_specifier", "enum_specifier", "union_specifier"
+        ):
+            snippet = _text(raw, node).strip()
+            if not snippet.endswith(";"):
+                snippet += ";"
+            shared_preamble.append(snippet)
+
+        elif node.type in (
+            "preproc_include", "preproc_def", "preproc_function_def",
+            "preproc_ifdef", "preproc_if", "preproc_else", "preproc_elif",
+            "using_declaration", "type_definition",
+            "template_declaration", "declaration", "namespace_definition"
+        ):
+            shared_preamble.append(_text(raw, node).strip())
 
         elif node.type == "function_definition":
             info = _function_info(raw, node)
-            if info[0] in names:
-                raise ValueError(f"Duplicate function: {info[0]}")
-            names.add(info[0])
+            name = info[0]
+            if name in seen_names and name != "main":
+                count = sum(1 for f in functions if f[0] == name)
+                info = (f"{name}_{count}", info[1], info[2])
+            seen_names.add(name)
             functions.append(info)
 
         elif node.type == "comment":
             continue
 
         else:
-            raise ValueError(
-                f"Unsupported top-level construct: {node.type}"
-            )
+            snippet = _text(raw, node).strip()
+            if snippet:
+                shared_preamble.append(snippet)
 
     main_functions = [f for f in functions if f[0] == "main"]
     helpers = [f for f in functions if f[0] != "main"]
@@ -146,22 +138,18 @@ def split_source(source_path: Path, output_dir: Path) -> SplitResult:
     if len(main_functions) != 1:
         raise ValueError("Exactly one main() function is required")
 
-    if len(helpers) < 2:
-        raise ValueError("At least two helper functions are required")
+    if len(helpers) < 1:
+        raise ValueError("At least one helper function is required to split into multiple modules")
 
-    if len(functions) > 16:
-        raise ValueError("Maximum 16 functions supported")
-
-    # All validation above finishes before writing generated files.
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    header = (
-        "#pragma once\n\n"
-        + "\n".join(dict.fromkeys(includes))
-        + "\n\n"
-        + "\n".join(f[1] for f in helpers)
-        + "\n"
-    )
+    header_parts = ["#pragma once\n"]
+    if shared_preamble:
+        header_parts.append("\n".join(dict.fromkeys(shared_preamble)))
+    if helpers:
+        header_parts.append("\n// Forward declarations\n" + "\n".join(f[1] for f in helpers))
+
+    header = "\n\n".join(header_parts) + "\n"
 
     generated = []
 

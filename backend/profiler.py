@@ -21,10 +21,16 @@ the reference for slowdown (Equation 10) and profiling overhead.
 
 from functools import lru_cache
 import os
+from pathlib import Path
 import shutil
 import statistics
 import subprocess
+import sys
 import time
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from backend import config, emon, kernels, phases, topology
 from backend.execution import ProcessGroup, ProcessSpec, run_group
@@ -114,7 +120,7 @@ def _check(entry, expected, label):
             f"{label}: exit code {entry.get('exitCode')}; {entry.get('stderr', '')[:300]}"
         )
 
-    if expected is not None and entry["stdout"].strip() != expected.strip():
+    if expected is not None and entry.get("stdout", "").strip() != expected.strip():
         raise RuntimeError(f"{label}: output verification failed")
 
 
