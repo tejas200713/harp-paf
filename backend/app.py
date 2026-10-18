@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-
+from backend.split_api import router as split_router
 from backend import config, profiler, topology
 from backend.approved_workloads import (
     approved_hashes, get_workload, list_workloads,
@@ -26,6 +26,7 @@ app = FastAPI(
     description="Phase-Aware Adaptive Fusion for Hyper-Thread Resource Pairing",
     version=VERSION,
 )
+app.include_router(split_router)
 
 app.add_middleware(
     CORSMiddleware,

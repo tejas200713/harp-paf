@@ -558,6 +558,7 @@ async function generateJobForFiles(files, language = 'cpp', repetitions = 5) {
   return job;
 }
 
+
 export async function createJob(files, language = 'cpp', repetitions = 5) {
   if (!Array.isArray(files) || files.length < 2 || files.length > 16) {
     throw new Error('Between 2 and 16 source files are required.');
@@ -567,120 +568,51 @@ export async function createJob(files, language = 'cpp', repetitions = 5) {
     throw new Error('Language must be c or cpp.');
   }
 
-  // 1. Generate customized high-fidelity analysis for user's actual files
-  return generateJobForFiles(files, language, repetitions);
+  const formData = new FormData();
+
+  formData.append('language', language);
+  formData.append('repetitions', String(repetitions));
+
+  files.forEach(file => {
+    formData.append('files', file);
+  });
+
+  return apiRequest('/api/jobs', {
+    method: 'POST',
+    body: formData
+  });
 }
+
+
 
 export async function getJob(id) {
   if (!id) {
+    throw new Error('Job ID is required.');
+  }
+
+  if (import.meta.env.VITE_USE_SAMPLES === '1') {
     return sample('job');
   }
 
-  // Check custom local jobs
-  const customJobs = getStoredCustomJobs();
-  const custom = customJobs.find(j => j.jobId === id);
-  if (custom) {
-    // Advance progress stages if running
-    if (custom.status === 'running') {
-      const stages = [
-        'Compiling source files and building executable targets',
-        'Verifying executable outputs and checksums',
-        'Profiling hardware counters and stressor probes',
-        'Computing resource overlap features',
-        'Evaluating pairwise slowdowns and matching',
-        'Running multi-method benchmark repetitions',
-        'Saving benchmark results',
-        'Profiling, pairing and comparative benchmarking completed'
-      ];
-      custom.stageIndex = Math.min(8, (custom.stageIndex || 0) + 1);
-      custom.stage = stages[Math.min(stages.length - 1, custom.stageIndex - 1)] || 'Completed';
-      if (custom.stageIndex >= 8) {
-        custom.status = 'completed';
-      }
-      saveCustomJob(custom);
-    }
-    return custom;
-  }
-
-  // Check canonical sample
-  if (id === '609315c9a54f4a64b733cb9ff93e5478') {
-    return sample('job');
-  }
-
-  try {
-    const backendJob = await apiRequest(`/api/jobs/${encodeURIComponent(id)}`);
-    if (backendJob) {
-      const files = backendJob.files || [];
-      if (!backendJob.executionResults || backendJob.executionResults.length === 0) {
-        backendJob.executionResults = files.map((f, i) => ({
-          taskId: f.taskId,
-          filename: f.originalName || f.savedName,
-          success: true,
-          verified: true,
-          executionTime: 0.55 + i * 0.1,
-          exitCode: 0,
-          stdout: `[${f.originalName || f.savedName}] Workload executed on CPU ${i % 2} (SMT sibling)\n[${f.originalName || f.savedName}] Computations completed: 1,000,000\n[${f.originalName || f.savedName}] Result Checksum: 0x${Math.abs(strHash(f.originalName || f.savedName || 'task') * 33).toString(16).toUpperCase()}\n[${f.originalName || f.savedName}] Elapsed runtime: ${(0.55 + i * 0.1).toFixed(3)}s\nVerification PASSED`,
-          stderr: '',
-          timedOut: false
-        }));
-      }
-      if (!backendJob.compilationResults || backendJob.compilationResults.length === 0) {
-        backendJob.compilationResults = files.map(f => ({
-          taskId: f.taskId,
-          filename: f.originalName || f.savedName,
-          success: true,
-          exitCode: 0,
-          stdout: `[build] g++ -O2 -std=c++17 ${f.originalName || f.savedName} -o bin/${(f.savedName || f.originalName || 'task.cpp').replace('.cpp', '.exe')}\nBuild completed successfully: 0 warnings`,
-          stderr: ''
-        }));
-      }
-      return backendJob;
-    }
-  } catch {
-    return sample('job');
-  }
+  return apiRequest(`/api/jobs/${encodeURIComponent(id)}`);
 }
+
+
 
 export async function getResults(id) {
   if (!id) {
+    throw new Error('Job ID is required.');
+  }
+
+  if (import.meta.env.VITE_USE_SAMPLES === '1') {
     return sample('results');
   }
 
-  // Check custom results
-  const customResults = getStoredCustomResults(id);
-  if (customResults) {
-    return customResults;
-  }
-
-  // Check canonical sample
-  if (id === '609315c9a54f4a64b733cb9ff93e5478') {
-    return sample('results');
-  }
-
-  try {
-    return await apiRequest(`/api/jobs/${encodeURIComponent(id)}/results`);
-  } catch {
-    // If backend 409 or failed for this job, check if we can synthesize results for its files
-    try {
-      const backendJob = await apiRequest(`/api/jobs/${encodeURIComponent(id)}`);
-      if (backendJob && backendJob.files && backendJob.files.length > 0) {
-        const fakeFiles = backendJob.files.map(f => ({
-          name: f.originalName || f.savedName,
-          size: f.size || 500
-        }));
-        const synthJob = await generateJobForFiles(fakeFiles, backendJob.language || 'cpp', backendJob.repetitions || 5);
-        const synthResults = getStoredCustomResults(synthJob.jobId);
-        if (synthResults) {
-          synthResults.jobId = id;
-          saveCustomResults(id, synthResults);
-          return synthResults;
-        }
-      }
-    } catch {}
-
-    return sample('results');
-  }
+  return apiRequest(
+    `/api/jobs/${encodeURIComponent(id)}/results`
+  );
 }
+
 
 export async function listJobs() {
   const customJobs = getStoredCustomJobs();
@@ -715,4 +647,26 @@ export function getSystem() {
 
 export function getWorkloads() {
   return apiRequest('/api/workloads').catch(() => sample('workloads'));
+}
+
+export async function analyzeSingleCode(file) {
+  if (!file) {
+    throw new Error('Please select a C++ source file.');
+  }
+
+  if (!file.name.toLowerCase().endsWith('.cpp')) {
+    throw new Error('Only .cpp files are supported.');
+  }
+
+  if (file.size === 0 || file.size > 100 * 1024) {
+    throw new Error('File must be between 1 byte and 100 KB.');
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return apiRequest('/api/split/analyze', {
+    method: 'POST',
+    body: formData
+  });
 }
