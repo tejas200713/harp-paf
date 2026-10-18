@@ -648,3 +648,25 @@ export function getSystem() {
 export function getWorkloads() {
   return apiRequest('/api/workloads').catch(() => sample('workloads'));
 }
+
+export async function analyzeSingleCode(file) {
+  if (!file) {
+    throw new Error('Please select a C++ source file.');
+  }
+
+  if (!file.name.toLowerCase().endsWith('.cpp')) {
+    throw new Error('Only .cpp files are supported.');
+  }
+
+  if (file.size === 0 || file.size > 100 * 1024) {
+    throw new Error('File must be between 1 byte and 100 KB.');
+  }
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  return apiRequest('/api/split/analyze', {
+    method: 'POST',
+    body: formData
+  });
+}

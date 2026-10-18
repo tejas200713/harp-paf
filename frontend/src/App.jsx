@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import SingleCodeOptimization from './SingleCodeOptimization.jsx';
 import { Link, NavLink, Route, Routes, useNavigate, useParams, Navigate } from 'react-router-dom';
 import {
   Activity,
@@ -86,6 +87,7 @@ const getMethodColor = (key) => METHOD_CONFIG[key]?.color || '#4bd6d2';
 const nav = [
   { to: '/', label: 'Home', icon: HomeIcon, end: true },
   { to: '/upload', label: 'New analysis', icon: Plus },
+  { to: '/single-code', label: 'Single Code Optimization', icon: FileCode2 },
   { section: 'Workspace' },
   { to: '/results', label: 'Results dashboard', icon: BarChart3 },
   { to: '/schedule', label: 'Schedule view', icon: Clock3 },
@@ -2322,6 +2324,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Home/>}/>
         <Route path="/upload" element={<UploadCode/>}/>
+        <Route path="/single-code" element={<SingleCodeOptimization/>}/>
         <Route path="/jobs/:id" element={<JobProgress/>}/>
         <Route path="/results" element={<LatestJobRedirect destination="results"/>}/>
         <Route path="/results/:id" element={<LiveResults/>}/>
