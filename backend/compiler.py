@@ -50,3 +50,11 @@ def compile_program(source_path, output_path, language="cpp", extra_flags=()):
             "stderr": "Compilation timed out after 60 seconds",
             "command": command,
         }
+    except OSError as exc:
+        return {
+            "success": False,
+            "exitCode": None,
+            "stdout": "",
+            "stderr": f"Failed to execute compiler {compiler!r}: {exc}",
+            "command": command,
+        }

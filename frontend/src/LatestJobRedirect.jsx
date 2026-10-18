@@ -7,12 +7,13 @@ const BENCHMARK_JOB_ID = '609315c9a54f4a64b733cb9ff93e5478';
 function getInitialTargetId() {
   try {
     const raw = localStorage.getItem('harp_custom_jobs_v1');
+    const rawRes = localStorage.getItem('harp_custom_results_v1');
+    const resultsMap = rawRes ? JSON.parse(rawRes) : {};
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
-        const completed = parsed.find(j => j.status === 'completed');
+        const completed = parsed.find(j => j.status === 'completed' && resultsMap[j.jobId]);
         if (completed?.jobId) return completed.jobId;
-        if (parsed[0]?.jobId) return parsed[0].jobId;
       }
     }
   } catch {}

@@ -27,6 +27,16 @@ MEASUREMENT_LOCK = ARTIFACTS_DIR / ".measurement.lock"
 
 WINDOWS = os.name == "nt"
 
+if WINDOWS:
+    _toolchain_candidates = [
+        Path(r"C:\Program Files\CodeBlocks\MinGW\bin"),
+        Path(r"C:\msys64\ucrt64\bin"),
+        Path(r"C:\msys64\mingw64\bin"),
+    ]
+    for _p in _toolchain_candidates:
+        if _p.is_dir() and str(_p).lower() not in os.environ.get("PATH", "").lower():
+            os.environ["PATH"] = f"{_p};" + os.environ.get("PATH", "")
+
 # Compilation and sandboxing. On Windows binaries are linked statically so
 # they do not depend on the MinGW runtime DLLs being on PATH.
 EXE_SUFFIX = ".exe" if WINDOWS else ""

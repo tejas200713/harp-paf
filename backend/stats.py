@@ -45,6 +45,8 @@ def _quantile(values, q):
 
 
 def bootstrap_ci(values, statistic, samples=2000, seed=0, level=0.95):
+    if not values:
+        return 0.0, 0.0
     if len(values) < 2:
         return values[0], values[0]
 
@@ -62,13 +64,16 @@ def bootstrap_ci(values, statistic, samples=2000, seed=0, level=0.95):
 
 def ratio_of_medians_ci(baseline, treatment, samples=2000, seed=0):
     """Bootstrap CI for median(baseline) / median(treatment)."""
+    if not baseline or not treatment:
+        return [1.0, 1.0]
 
     rng = random.Random(seed)
-    estimates = sorted(
-        statistics.median(rng.choices(baseline, k=len(baseline)))
-        / statistics.median(rng.choices(treatment, k=len(treatment)))
-        for _ in range(samples)
-    )
+    estimates = []
+    for _ in range(samples):
+        b = statistics.median(rng.choices(baseline, k=len(baseline)))
+        t = statistics.median(rng.choices(treatment, k=len(treatment)))
+        estimates.append(b / t if t > 0 else 1.0)
+    estimates.sort()
     return [
         estimates[int(0.025 * (samples - 1))],
         estimates[int(0.975 * (samples - 1))],
@@ -92,7 +97,7 @@ def _ranks(values):
 
 
 def spearman(x, y):
-    if len(x) < 3:
+    if len(x) < 3 or len(y) < 3 or len(x) != len(y):
         return None
 
     rx, ry = _ranks(x), _ranks(y)
@@ -105,10 +110,16 @@ def spearman(x, y):
 
 
 def mae(predicted, measured):
-    return statistics.fmean(abs(p - m) for p, m in zip(predicted, measured))
+    pairs = list(zip(predicted, measured))
+    if not pairs:
+        return 0.0
+    return statistics.fmean(abs(p - m) for p, m in pairs)
 
 
 def rmse(predicted, measured):
+    pairs = list(zip(predicted, measured))
+    if not pairs:
+        return 0.0
     return math.sqrt(
-        statistics.fmean((p - m) ** 2 for p, m in zip(predicted, measured))
+        statistics.fmean((p - m) ** 2 for p, m in pairs)
     )

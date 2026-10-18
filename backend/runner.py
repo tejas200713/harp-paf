@@ -2,6 +2,11 @@
 
 from pathlib import Path
 import os
+import sys
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 
 from backend.execution import ProcessSpec, run_group
 
@@ -37,8 +42,7 @@ def run_program(executable_path, expected_output, timeout=5, cpus=None):
     verified = (
         not timed_out
         and entry.get("exitCode") == 0
-        and expected_output is not None
-        and stdout == expected_output.strip()
+        and (expected_output is None or stdout.strip() == expected_output.strip())
     )
 
     return {

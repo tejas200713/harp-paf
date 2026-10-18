@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>HARP-PAF: System Architecture and Algorithmic Specifications</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+  @page {
+    size: A4;
+    margin: 18mm 16mm 18mm 16mm;
+    @bottom-right {
+      content: counter(page);
+      font-family: 'Inter', sans-serif;
+      font-size: 9pt;
+      color: #64748b;
+    }
+  }
+
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    color: #0f172a;
+    background: #ffffff;
+    line-height: 1.6;
+    font-size: 10pt;
+    margin: 0;
+    padding: 0;
+  }
+
+  .cover {
+    page-break-after: always;
+    padding-top: 60px;
+    text-align: center;
+  }
+
+  .cover-badge {
+    display: inline-block;
+    background: #0f172a;
+    color: #38bdf8;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    font-weight: 600;
+    padding: 5px 14px;
+    border-radius: 20px;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin-bottom: 24px;
+  }
+
+  .cover h1 {
+    font-size: 28pt;
+    font-weight: 800;
+    color: #0f172a;
+    line-height: 1.2;
+    margin: 0 0 16px;
+    letter-spacing: -0.5px;
+  }
+
+  .cover h2 {
+    font-size: 14pt;
+    font-weight: 500;
+    color: #475569;
+    margin: 0 auto 40px;
+    max-width: 600px;
+    line-height: 1.5;
+  }
+
+  .cover-meta {
+    margin-top: 80px;
+    border-top: 1px solid #e2e8f0;
+    padding-top: 25px;
+    display: flex;
+    justify-content: space-around;
+    text-align: left;
+    font-size: 9.5pt;
+  }
+
+  .cover-meta div b {
+    display: block;
+    color: #0f172a;
+    font-weight: 700;
+  }
+
+  .cover-meta div span {
+    color: #64748b;
+  }
+
+  h2 {
+    font-size: 16pt;
+    font-weight: 700;
+    color: #0f172a;
+    border-bottom: 2px solid #0f172a;
+    padding-bottom: 6px;
+    margin-top: 32px;
+    margin-bottom: 14px;
+    page-break-after: avoid;
+  }
+
+  h3 {
+    font-size: 12pt;
+    font-weight: 700;
+    color: #1e293b;
+    margin-top: 22px;
+    margin-bottom: 8px;
+    page-break-after: avoid;
+  }
+
+  h4 {
+    font-size: 10.5pt;
+    font-weight: 600;
+    color: #334155;
+    margin-top: 16px;
+    margin-bottom: 6px;
+  }
+
+  p {
+    margin: 0 0 10px;
+    text-align: justify;
+  }
+
+  ul, ol {
+    margin: 0 0 12px 20px;
+    padding: 0;
+  }
+
+  li {
+    margin-bottom: 4px;
+  }
+
+  code, pre {
+    font-family: 'JetBrains Mono', Consolas, monospace;
+  }
+
+  code {
+    background: #f1f5f9;
+    color: #0f172a;
+    padding: 2px 5px;
+    border-radius: 4px;
+    font-size: 8.5pt;
+    border: 1px solid #e2e8f0;
+  }
+
+  pre {
+    background: #0f172a;
+    color: #f8fafc;
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 8pt;
+    line-height: 1.45;
+    overflow-x: auto;
+    page-break-inside: avoid;
+    margin: 10px 0 14px;
+  }
+
+  .math-block {
+    background: #f8fafc;
+    border-left: 4px solid #0284c7;
+    padding: 10px 14px;
+    margin: 12px 0;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    color: #0369a1;
+    border-radius: 0 6px 6px 0;
+    page-break-inside: avoid;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 12px 0 18px;
+    font-size: 8.5pt;
+    page-break-inside: avoid;
+  }
+
+  th, td {
+    padding: 7px 10px;
+    border: 1px solid #cbd5e1;
+    text-align: left;
+  }
+
+  th {
+    background: #0f172a;
+    color: #ffffff;
+    font-weight: 600;
+  }
+
+  tr:nth-child(even) {
+    background: #f8fafc;
+  }
+
+  .card-box {
+    border: 1px solid #e2e8f0;
+    background: #f8fafc;
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin: 12px 0;
+    page-break-inside: avoid;
+  }
+
+  .card-box b {
+    color: #0f172a;
+  }
+
+  .section-break {
+    page-break-before: always;
+  }
+</style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="cover">
+  <div class="cover-badge">HARP-PAF Technical Specification</div>
+  <h1>System Architecture & Algorithmic Foundations</h1>
+  <h2>Phase-Aware Adaptive Fusion for Hyper-Thread Resource Pairing and Single-Code Compilation Concurrency</h2>
+  
+  <div style="max-width: 580px; margin: 0 auto; background: #f1f5f9; padding: 18px; border-radius: 10px; text-align: left; border: 1px solid #cbd5e1;">
+    <p style="margin: 0; font-size: 9.5pt; color: #334155;">
+      <b>Abstract:</b> This document details the end-to-end technical architecture, mathematical formulations, and operational algorithms of the HARP-PAF research platform. It covers both the <b>Multi-Workload SMT Scheduling Engine</b> (using Intel EMON hardware PMU counters, interference stressor probing, Bayesian adaptive feature fusion, bottleneck interaction regression, and dynamic co-scheduling) and the <b>Single Code Optimization Engine</b> (Tree-sitter AST translation-unit decomposition, parallel multi-threaded build coordination, and pairwise build contention correlation).
+    </p>
+  </div>
+
+  <div class="cover-meta">
+    <div>
+      <b>Platform Version</b>
+      <span>HARP-PAF v0.3.0</span>
+    </div>
+    <div>
+      <b>Target Processor</b>
+      <span>Intel Core i5-1235U (Alder Lake)</span>
+    </div>
+    <div>
+      <b>Execution Engine</b>
+      <span>FastAPI + Vite React 19</span>
+    </div>
+    <div>
+      <b>Compiler Stack</b>
+      <span>GCC / G++ 14.2.0 (MinGW-w64)</span>
+    </div>
+  </div>
+</div>
+
+<!-- SECTION 1 -->
+<h2>1. Problem Formulation & Hardware Context</h2>
+
+<p>
+Modern superscalar microprocessors employ <b>Simultaneous Multi-Threading (SMT)</b>—known commercially as Intel Hyper-Threading—to maximize execution pipeline utilization. An SMT-enabled physical core exposes two or more logical CPUs (hardware threads) that dynamically share critical on-chip execution resources:
+</p>
+
+<ul>
+  <li><b>Execution Ports & Functional Units:</b> Integer ALUs (Port 0, 1, 5, 6), Vector/FP units and dividers (Port 0, 1, 5).</li>
+  <li><b>Memory Hierarchy:</b> Shared Level-1 Data Cache (L1D, 48 KB), Level-2 Cache (L2, 1.25 MB per P-core), Load/Store execution buffers, and Miss Status Holding Registers (MSHRs).</li>
+  <li><b>Frontend & Prediction:</b> Branch Target Buffers (BTBs), Reorder Buffer (ROB) partitions, and Instruction Decoders.</li>
+</ul>
+
+<p>
+When two threads requiring the same bottleneck resource are co-scheduled on sibling SMT threads, destructive resource contention occurs, resulting in severe slowdowns (often exceeding 40%), memory stall bubbles, and cache thrashing. Conversely, complementary workloads (e.g., an Integer ALU compute thread paired with a memory-bandwidth-bound streaming thread) achieve near-linear aggregate throughput gains.
+</p>
+
+<p>
+<b>The HARP-PAF Objective:</b> Given a set $W = \{w_1, w_2, \dots, w_n\}$ of approved independent C++ workloads and a physical core with two SMT sibling threads, find a non-preemptive schedule that minimizes total <b>makespan</b>:
+</p>
+
+<div class="math-block">
+  $$\text{Makespan}(W) = \max_{w_i \in W} \left( t_{\text{finish}}(w_i) \right) - \min_{w_i \in W} \left( t_{\text{start}}(w_i) \right)$$
+</div>
+
+---
+
+<h2>2. End-to-End System Architecture</h2>
+
+<p>
+The application follows a decoupled client-server architecture consisting of a high-performance Python FastAPI backend and an interactive, real-time React 19 frontend:
+</p>
+
+<div class="card-box">
+  <b>System Subsystems Overview:</b>
+  <ol>
+    <li><b>Frontend Web Tier (React 19 + Vite):</b> Single-Page Application (SPA) providing real-time scheduling Gantt charts, interactive correlation scatter plots, hardware contention radar charts, and source-code splitting diagnostics.</li>
+    <li><b>API & Process Dispatcher (FastAPI + Uvicorn):</b> RESTful API handling workload upload, compilation verification, isolated execution orchestration, and single-code AST splitting.</li>
+    <li><b>Hardware Telemetry & Topology Engine:</b> Detects physical core layout and SMT sibling thread pairs via Windows <code>GetLogicalProcessorInformationEx</code> and Linux <code>/sys/devices/system/cpu</code>. Pinned execution guarantees measurement drift elimination.</li>
+    <li><b>Workload Characterization Engine:</b> Combines GNU <code>objdump</code> static disassembly analysis with Intel EMON hardware counter sampling (100 ms phase windows) and 5 resource-specific stressor probes.</li>
+    <li><b>Predictive Slowdown & Pairing Engine:</b> Evaluates pairwise interference using a calibrated Bottleneck Sensitivity &times; Aggressiveness Non-Negative Least Squares (NNLS) model.</li>
+    <li><b>Dynamic SMT Co-Scheduler:</b> Online event-driven dispatch algorithm executing on P-Core 0 (Logical CPUs 0 and 1) while isolating measurement harness threads on E-Core 11.</li>
+    <li><b>Single-Code Modularizer & Parallel Compiler:</b> Tree-sitter AST parser that decomposes monolithic C++ programs into modular translation units and orchestrates concurrent compilation across worker threads.</li>
+  </ol>
+</div>
+
+<h3>Hardware Core Topology Mapping</h3>
+<p>
+On hybrid heterogeneous architectures (e.g., Intel 12th Gen Alder Lake i5-1235U), SMT is only available on Golden Cove Performance Cores (P-cores). Gracemont Efficient Cores (E-cores) are single-threaded. HARP-PAF maps execution as follows:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>CPU Identifier</th>
+      <th>Microarchitecture</th>
+      <th>Role in HARP-PAF Platform</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>Logical CPU 0</b></td>
+      <td>Golden Cove (P-Core 0, SMT Thread 0)</td>
+      <td>Primary Workload Co-Execution Thread</td>
+    </tr>
+    <tr>
+      <td><b>Logical CPU 1</b></td>
+      <td>Golden Cove (P-Core 0, SMT Thread 1)</td>
+      <td>Sibling Workload Co-Execution Thread</td>
+    </tr>
+    <tr>
+      <td><b>Logical CPU 2–3</b></td>
+      <td>Golden Cove (P-Core 1, SMT Thread 0/1)</td>
+      <td>Secondary Evaluation / Build Core</td>
+    </tr>
+    <tr>
+      <td><b>Logical CPU 4–10</b></td>
+      <td>Gracemont (E-Cores 0–6)</td>
+      <td>System OS Background Tasks</td>
+    </tr>
+    <tr>
+      <td><b>Logical CPU 11</b></td>
+      <td>Gracemont (E-Core 7)</td>
+      <td><b>Dedicated Measurement Harness & Controller (Pinned)</b></td>
+    </tr>
+  </tbody>
+</table>
+
+---
+
+<div class="section-break"></div>
+
+<h2>3. Mathematical Formulations & Predictive Models</h2>
+
+<h3>3.1 Adaptive Bayesian Feature Fusion (Equation F)</h3>
+<p>
+Static disassembly analysis cannot observe cache miss rates or runtime branch mispredictions, while runtime hardware sampling suffers from cold-start transient noise. HARP-PAF computes a fused feature vector $x(i, k, t)$ for workload $i$, feature $k$, and phase $t$:
+</p>
+
+<div class="math-block">
+  $$x(i, k, t) = q(i, k, t) \cdot d(i, k, t) + (1 - q(i, k, t)) \cdot s(i, k)$$
+</div>
+
+<p>where $s(i, k)$ is the normalized static binary estimate, $d(i, k, t)$ is the runtime counter estimate, and $q$ is the dynamic confidence weight:</p>
+
+<div class="math-block">
+  $$q(i, k, t) = Q_{\max} \cdot \max\left(0, 1 - \frac{\sigma}{\sigma_{\text{ref}}}\right) \cdot \min\left(1, \frac{n_t}{n_{\min}}\right)$$
+</div>
+
+<p>Parameters: $Q_{\max} = 0.90$, $\sigma_{\text{ref}} = 0.25$, $n_{\min} = 2$ windows (100 ms per window). If hardware counters are unavailable, $q = 0$.</p>
+
+<h3>3.2 Interference Sensitivity Probing (Equation S1)</h3>
+<p>
+Workload sensitivity to each shared resource $k \in \{\text{int}, \text{fp}, \text{stream}, \text{cache}, \text{branch}\}$ is measured empirically by co-running workload $i$ against five tuned micro-stressors:
+</p>
+
+<div class="math-block">
+  $$\text{sens}(i, k) = \min\left(2.0, \; \frac{T(i \mid \text{stressor } k)}{T_{\text{solo}}(i)} - 1\right)$$
+</div>
+
+<h3>3.3 Hardware Aggressiveness Signature (Equation S2)</h3>
+<p>
+The pressure a co-runner generates on resource $k$ during phase $t$ is normalized against the stressor's calibrated reference signature $g_k$:
+</p>
+
+<div class="math-block">
+  $$\text{aggr}(j, k, t) = \min\left(1.5, \; \frac{x(j, \text{agg}_k, t)}{g_k}\right)$$
+</div>
+
+<ul>
+  <li><b>Integer ALU:</b> $\min\left(1, \frac{\text{IPC} \cdot m_{\text{int}}}{5}\right)$ (5 ALU execution ports).</li>
+  <li><b>FP / Vector:</b> $\max\left(\text{divider\_busy}, \min\left(1, \frac{\text{IPC} \cdot m_{\text{fp}}}{3}\right)\right)$ (3 vector ports).</li>
+  <li><b>Memory Bandwidth:</b> $\frac{\text{LLC\_misses} \times 64\,\text{B}}{\Delta t \times B_{\text{socket}}}$ ($B_{\text{socket}} = 20\,\text{GB/s}$).</li>
+  <li><b>Cache Pressure:</b> $\text{footprint} \cdot (1 - \text{LLC\_miss\_ratio})$, where $\text{footprint} = \frac{\text{LLC\_refs} / 1000\,\text{instr}}{40}$.</li>
+  <li><b>Branch Divergence:</b> $\frac{\text{branch\_misses} / 1000\,\text{instr}}{40}$.</li>
+</ul>
+
+<h3>3.4 Bottleneck Contention Interaction Kernel (Equation S3)</h3>
+<p>
+To avoid double-counting overlapping contention, HARP-PAF applies the <b>Bottleneck Dominance Principle</b>: a thread's pipeline is stalled predominantly by its single most contended resource:
+</p>
+
+<div class="math-block">
+  $$H(i, j) = \sum_t \pi_t \cdot \frac{1}{2} \left[ \max_k \left( \text{sens}(i, k) \cdot \text{aggr}(j, k, t) \right) + \max_k \left( \text{sens}(j, k) \cdot \text{aggr}(i, k, t) \right) \right]$$
+</div>
+
+<h3>3.5 Calibrated Slowdown Model (Equation S4)</h3>
+<p>
+Pairwise slowdown $\hat{y}(i, j)$ is predicted via Non-Negative Least Squares (NNLS) regression fitted on held-out calibration pairs:
+</p>
+
+<div class="math-block">
+  $$\hat{y}(i, j) = \max\left(0, \; b_0 + b \cdot H(i, j)\right)$$
+</div>
+
+<p>Calibrated parameters: $b_0 = 0.0381$, $b = 0.7003$. This model achieves a held-out Mean Absolute Error (MAE) of <b>0.069</b> and a rank correlation of <b>0.84</b> (compared with 0.129 MAE and 0.33 correlation for earlier linear formulations).</p>
+
+---
+
+<div class="section-break"></div>
+
+<h2>4. Operational Algorithms</h2>
+
+<h3>Algorithm 1: Workload Characterization Pipeline</h3>
+<pre>
+Input: Workload source file w (.cpp), target compiler GCC
+Output: Fused characterization tuple {T_solo, sens, phases, x_fused}
+
+1: Compile w with: g++ -O2 -std=c++17 w.cpp -o w.exe
+2: Execute w.exe solo; verify stdout matches expected SHA-256 manifest
+3: Warm up CPU for 10 seconds to stabilize core thermal state
+4: Measure T_solo across 3 iterations (take median)
+5: Run w.exe with Intel EMON; capture 100 ms counter windows
+6: Detect phase transitions when window metrics deviate by > 0.25 from running mean
+7: For each stressor k in {int_alu, fp_div, stream, cache, branch}:
+8:     Pin w.exe to Logical CPU 0 and stressor_k to Logical CPU 1
+9:     Measure T(w | stressor_k) and compute sens(w, k) via Equation S1
+10: Disassemble w.exe with objdump; extract loop-weighted instruction mix
+11: Compute fused features x(w, k, t) via Equation F
+12: Return characterization tuple
+</pre>
+
+<h3>Algorithm 2: Dynamic SMT Co-Scheduling (Online Dispatch)</h3>
+<pre>
+Input: Queue of pending characterized workloads Q, Logical CPU 0, Logical CPU 1
+Output: Execution makespan and Gantt co-run timeline
+
+1: Pin measurement harness thread to E-core Logical CPU 11
+2: Select w_first = argmax_{w in Q} (T_solo(w)); dispatch to Logical CPU 0
+3: Select w_second = argmin_{w in Q} (predicted_slowdown(w_first, w)); dispatch to CPU 1
+4: While Q is not empty or active threads running:
+5:     Wait for hardware thread notification (workload w_finished terminates)
+6:     Record completion time and output checksum
+7:     Identify surviving co-runner w_active on sibling thread
+8:     Estimate remaining execution progress p of w_active
+9:     If Q is not empty:
+10:        Select candidate c* in Q minimizing:
+               Cost(c) = predicted_slowdown(w_active[p..1], c) + mu * max(0, worst_slowdown - tau) + nu * sigma
+11:        Dispatch c* to the free hardware thread
+12: Return makespan
+</pre>
+
+<h3>Algorithm 3: Single-Code C++ AST Decomposition & Parallel Build Coordination</h3>
+<pre>
+Input: Monolithic C++ source file S, worker count P = 4, output directory O
+Output: Generated translation units, build benchmark results, Gantt schedule
+
+1: Parse S into Concrete Syntax Tree (CST) using Tree-sitter CPP grammar
+2: Identify root AST nodes: struct_specifiers, class_specifiers, preprocessor directives, functions
+3: Extract common preamble and forward function declarations into generated.h
+4: Split helper functions f_1, f_2, ..., f_m into module_01.cpp, module_02.cpp, ...
+5: Place main() into main.cpp (including generated.h)
+6: Original build: Compile monolithic S with g++ -O2 -o original.exe; record T_orig
+7: Parallel build: Initialize ThreadPoolExecutor(max_workers = P)
+8: For each translation unit u_i in parallel:
+9:     Record start timestamp t_start and assign worker thread ID w_id
+10:    Compile g++ -O2 -c u_i.cpp -o u_i.o; record end timestamp t_end
+11: Link all object files: g++ u_1.o ... u_k.o -o split.exe; record T_link
+12: Execute original.exe and split.exe; verify identical stdout outputs
+13: Compute pairwise build contention matrix C(i, j) and correlation coefficient r
+14: Generate persistent job artifacts (job.json, results.json)
+15: Return benchmark, generated files, and schedule
+</pre>
+
+---
+
+<h2>5. Empirical Performance Comparison</h2>
+
+<p>
+Evaluation conducted on an Intel Core i5-1235U with 8 resource-specific C++ benchmark workloads over 10 repeated randomized trials demonstrates that HARP-PAF's phase-aware dynamic scheduling substantially outperforms standard OS scheduling heuristics:
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Scheduling Strategy</th>
+      <th>Median Makespan</th>
+      <th>Speedup vs Random</th>
+      <th>Runtime Reduction</th>
+      <th>Throughput Gain</th>
+      <th>Trial Superiority</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><b>HARP-PAF (Dynamic)</b></td>
+      <td><b>3.20 s</b></td>
+      <td><b>1.09&times;</b></td>
+      <td><b>8.4%</b></td>
+      <td><b>+9.1%</b></td>
+      <td><b>10 / 10 runs</b></td>
+    </tr>
+    <tr>
+      <td>HARP-PAF (Static Pairs)</td>
+      <td>3.45 s</td>
+      <td>1.01&times;</td>
+      <td>1.2%</td>
+      <td>+1.3%</td>
+      <td>6 / 10 runs</td>
+    </tr>
+    <tr>
+      <td>Random Co-Scheduling</td>
+      <td>3.49 s</td>
+      <td>1.00&times;</td>
+      <td>0.0%</td>
+      <td>0.0%</td>
+      <td>Baseline</td>
+    </tr>
+    <tr>
+      <td>OS Default (Linux CFS / Windows)</td>
+      <td>3.53 s</td>
+      <td>0.99&times;</td>
+      <td>-1.1%</td>
+      <td>-1.1%</td>
+      <td>1 / 10 runs</td>
+    </tr>
+    <tr>
+      <td>PORT Contention-Aware</td>
+      <td>3.74 s</td>
+      <td>0.93&times;</td>
+      <td>-7.2%</td>
+      <td>-6.7%</td>
+      <td>0 / 10 runs</td>
+    </tr>
+    <tr>
+      <td>Serial Execution (No SMT)</td>
+      <td>5.47 s</td>
+      <td>0.64&times;</td>
+      <td>-56.7%</td>
+      <td>-36.2%</td>
+      <td>0 / 10 runs</td>
+    </tr>
+  </tbody>
+</table>
+
+</body>
+</html>

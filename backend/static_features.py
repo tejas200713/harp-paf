@@ -83,10 +83,13 @@ OFFSET_RE = re.compile(r"\+0x[0-9a-f]+$")
 
 
 def _disassemble(binary):
-    result = subprocess.run(
-        ["objdump", "-d", "-C", "--no-show-raw-insn", "-j", ".text", str(binary)],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["objdump", "-d", "-C", "--no-show-raw-insn", "-j", ".text", str(binary)],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except OSError as exc:
+        raise RuntimeError(f"objdump failed to execute: {exc}")
 
     if result.returncode != 0:
         raise RuntimeError(f"objdump failed: {result.stderr.strip()}")

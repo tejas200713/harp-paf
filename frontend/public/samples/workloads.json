@@ -4,83 +4,95 @@
     "kind": "integer-alu",
     "description": "Xorshift hashing; integer ALU and multiplier bound",
     "sha256": "30c1f5c2378cf300d99d3b18a368efd06dd09f5f756d4b1a83cea1ecb4dfab3d",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "// Integer ALU and multiplier bound: xorshift hashing.\n#include <cstdint>\n#include <iostream>\n\nint main() {\n    uint64_t x = 88172645463325252ull, acc = 0;\n    for (long i = 0; i < 430000000L; ++i) {\n        x ^= x << 13;\n        x ^= x >> 7;\n        x ^= x << 17;\n        acc += x * 0x9E3779B97F4A7C15ull;\n        acc ^= acc >> 29;\n    }\n    std::cout << \"HASH=\" << acc << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "w2_integer_divide.cpp",
     "kind": "integer-divide",
     "description": "Dependent 64-bit division and modulo; divider bound",
     "sha256": "064a1dc635e1cd029e322ca9312c64355ddd387a9e1a982e1ff31fee8532ca2b",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "// Integer divider bound: dependent 64-bit division and modulo.\n#include <cstdint>\n#include <iostream>\n\nint main() {\n    uint64_t acc = 1234567, d = 7;\n    for (long i = 0; i < 120000000L; ++i) {\n        acc = acc / d + (acc % d) + 0x12345678ull + i;\n        d = (acc & 0xFF) + 3;\n    }\n    std::cout << \"DIV=\" << acc << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "w3_fp_sqrt_chain.cpp",
     "kind": "scalar-fp",
     "description": "Dependent square-root and divide chain; scalar FP bound",
     "sha256": "fa50025add180a6c7e8d667b5ceb91f2f45e5f94fcab4808c2cafbc99303bc00",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "// Scalar floating-point bound: dependent square-root / divide chain.\n#include <cmath>\n#include <iostream>\n\nint main() {\n    double x = 3.0;\n    for (long i = 0; i < 70000000L; ++i) {\n        x = std::sqrt(x * 1.000001 + 2.0) / 1.0000003 + 0.5;\n    }\n    std::cout << \"FP=\" << static_cast<long long>(x * 1000000) << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "w4_simd_saxpy.cpp",
     "kind": "simd",
     "description": "Vectorised single-precision update on L1-resident arrays",
     "sha256": "d94419328560a35f53de1fa1ab9dc10d28d132bd0138af5bb55dab49925222f2",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "// SIMD bound: vectorisable single-precision update on L1-resident arrays.\n#include <iostream>\n\nstatic float a[2048], b[2048], c[2048];\n\nint main() {\n    for (int i = 0; i < 2048; ++i) {\n        b[i] = 1.0f + i * 1e-4f;\n        c[i] = 0.5f;\n    }\n    for (int pass = 0; pass < 3200000; ++pass) {\n        float s = 0.999f - (pass & 7) * 0.0001f;\n        for (int i = 0; i < 2048; ++i) a[i] = a[i] * s + b[i] * c[i];\n    }\n    double sum = 0;\n    for (int i = 0; i < 2048; ++i) sum += a[i];\n    std::cout << \"SIMD=\" << static_cast<long long>(sum) << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "w5_memory_stream.cpp",
     "kind": "memory-bandwidth",
     "description": "Sequential read-modify-write over 64 MiB",
     "sha256": "b576297b7f1175fc46feba34e9846f34de59d538455633a273804ad755486078",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "// Memory-bandwidth bound: sequential read-modify-write over 64 MiB.\n#include <cstdint>\n#include <iostream>\n#include <vector>\n\nint main() {\n    std::vector<uint64_t> data(8u << 20, 1);\n    uint64_t acc = 0;\n    for (int pass = 0; pass < 120; ++pass) {\n        for (size_t i = 0; i < data.size(); ++i) {\n            acc += data[i];\n            data[i] = acc;\n        }\n    }\n    std::cout << \"STREAM=\" << acc << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "w6_pointer_chase.cpp",
     "kind": "memory-latency",
     "description": "Dependent random loads through a 32 MiB cycle",
     "sha256": "7cc3e92587e471e51b1e23bf6feba3c2b29b115409b23c4e566bece872dc4adb",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "// Memory-latency bound: dependent random loads through a 32 MiB cycle.\n#include <cstdint>\n#include <iostream>\n#include <vector>\n\nint main() {\n    std::vector<uint32_t> next(8u << 20);\n    for (uint32_t i = 0; i < next.size(); ++i) next[i] = i;\n    uint64_t state = 42;\n    for (uint32_t i = next.size() - 1; i > 0; --i) {\n        state = state * 6364136223846793005ull + 1442695040888963407ull;\n        uint32_t j = (state >> 17) % i;\n        uint32_t t = next[i]; next[i] = next[j]; next[j] = t;\n    }\n    uint32_t p = 0;\n    uint64_t sum = 0;\n    for (long i = 0; i < 7000000L; ++i) {\n        p = next[p];\n        sum += p;\n    }\n    std::cout << \"CHASE=\" << sum << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "w7_branch_heavy.cpp",
     "kind": "branch",
     "description": "Data-dependent unpredictable branches",
     "sha256": "aa3b41d156714c0d77760061977683aff29cf58012dc4799ddfdaeebc6e11eba",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "// Branch-prediction bound: data-dependent, unpredictable control flow.\n#include <cstdint>\n#include <iostream>\n\n__attribute__((noinline)) static uint64_t left(uint64_t a, uint64_t v) { return a * 31 + v; }\n__attribute__((noinline)) static uint64_t right(uint64_t a, uint64_t v) { return (a >> 3) ^ (v * 7919); }\n\nint main() {\n    uint64_t state = 7, acc = 0;\n    for (long i = 0; i < 150000000L; ++i) {\n        state = state * 6364136223846793005ull + 1442695040888963407ull;\n        uint64_t v = state >> 17;\n        acc = (v & 1) ? left(acc, v) : right(acc, v);\n    }\n    std::cout << \"BRANCH=\" << acc << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "w8_phased_mix.cpp",
     "kind": "multi-phase",
     "description": "Integer phase, then streaming phase, then branch phase",
     "sha256": "29c8f340e193f62914f1ff179a917278dafb31f7407cd7fe332466c29b8243db",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "// Multi-phase workload: compute phase, streaming phase, then branchy phase.\n#include <cstdint>\n#include <iostream>\n#include <vector>\n\n__attribute__((noinline)) static uint64_t left(uint64_t a, uint64_t v) { return a * 31 + v; }\n__attribute__((noinline)) static uint64_t right(uint64_t a, uint64_t v) { return (a >> 3) ^ (v * 7919); }\n\nint main() {\n    uint64_t x = 88172645463325252ull, acc = 0;\n    for (long i = 0; i < 300000000L; ++i) {          // phase 1: integer ALU\n        x ^= x << 13; x ^= x >> 7; x ^= x << 17;\n        acc += x * 0x9E3779B97F4A7C15ull;\n    }\n    std::vector<uint64_t> data(8u << 20, 1);\n    for (int pass = 0; pass < 20; ++pass)            // phase 2: memory stream\n        for (size_t i = 0; i < data.size(); ++i) { acc += data[i]; data[i] = acc; }\n    uint64_t state = 7;\n    for (long i = 0; i < 80000000L; ++i) {           // phase 3: branches\n        state = state * 6364136223846793005ull + 1442695040888963407ull;\n        uint64_t v = state >> 17;\n        acc = (v & 1) ? left(acc, v) : right(acc, v);\n    }\n    std::cout << \"PHASED=\" << acc << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "task1.cpp",
     "kind": "legacy-demo",
     "description": "Original demo: integer sum (milliseconds; too short for measurement)",
     "sha256": "173ac9d777c6d28b05e9a971f0b398ddc89b5967c36fdebe2f2765dec13511f7",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "#include <iostream>\n\nint main() {\n    long long sum = 0;\n\n    for (int i = 1; i <= 1000000; i++) {\n        sum += i;\n    }\n\n    std::cout << \"SUM=\" << sum << std::endl;\n\n    return 0;\n}\n"
   },
   {
     "file": "task2.cpp",
     "kind": "legacy-demo",
     "description": "Original demo: modulo loop (milliseconds; too short for measurement)",
     "sha256": "aa498b3bac09da6488ca83db41b2803a245e9f0f0cb6fd702beb9a5297f2b4a5",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "#include <iostream>\n\nint main() {\n    volatile long long result = 0;\n    for (long long i = 1; i <= 3000000; i++) {\n        result = result + (i % 97);\n    }\n    std::cout << \"TASK2=\" << result << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "task3.cpp",
     "kind": "legacy-demo",
     "description": "Original demo: vector traversal (milliseconds; too short for measurement)",
     "sha256": "8cfad94462b345f071c0d9b4c1fdf16b13a8a5fcb761798c766dfbcf0c1a011c",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "#include <iostream>\n#include <vector>\n\nint main() {\n    const int N = 100000;\n    std::vector<int> data(N);\n\n    for (int i = 0; i < N; i++) {\n        data[i] = (i * 37) % 1000;\n    }\n\n    long long sum = 0;\n    for (int value : data) {\n        sum += value;\n    }\n\n    std::cout << \"TASK3=\" << sum << \"\\n\";\n    return 0;\n}\n"
   },
   {
     "file": "task4.cpp",
     "kind": "legacy-demo",
     "description": "Original demo: square-root loop (milliseconds; too short for measurement)",
     "sha256": "83f12b7d6e087ac1529030a9c2c555cdf3556f580e49961b2e3e49fe0bcd6e47",
-    "language": "cpp"
+    "language": "cpp",
+    "code": "#include <iostream>\n#include <cmath>\n\nint main() {\n    volatile double result = 0.0;\n\n    for (int i = 1; i <= 1000000; i++) {\n        result = result + std::sqrt(static_cast<double>(i));\n    }\n\n    std::cout << \"TASK4=\" << static_cast<long long>(result) << \"\\n\";\n    return 0;\n}\n"
   }
 ]
